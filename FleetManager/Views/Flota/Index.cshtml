@@ -50,7 +50,19 @@
       <tbody id="fleetBody"></tbody>
     </table>
   </div>
-  <div class="count" id="rowCount"></div>
+  <div class="pager">
+    <div class="count" id="rowCount"></div>
+    <div class="pager-controls">
+      <label>Rows per page
+        <select id="pageSize"><option>10</option><option>20</option><option>30</option><option>50</option><option>100</option></select>
+      </label>
+      <button class="secondary" id="pgFirst" title="First">&laquo;</button>
+      <button class="secondary" id="pgPrev" title="Previous">&lsaquo;</button>
+      <span id="pageInfo" class="page-info">1 / 1</span>
+      <button class="secondary" id="pgNext" title="Next">&rsaquo;</button>
+      <button class="secondary" id="pgLast" title="Last">&raquo;</button>
+    </div>
+  </div>
 </section>
 
 <section class="panel"><h2>Weekly Snapshots</h2>

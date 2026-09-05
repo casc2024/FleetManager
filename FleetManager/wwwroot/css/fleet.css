@@ -16,7 +16,10 @@ button:disabled{opacity:.6;cursor:wait}
 .toast{position:fixed;right:18px;bottom:18px;background:#17202a;color:#fff;padding:11px 14px;border-radius:9px;opacity:0;transform:translateY(12px);transition:.2s;z-index:50}.toast.show{opacity:1;transform:none}.toast.error{background:var(--red)}
 .user-box{display:flex;align-items:center;gap:6px;color:#fff;font-size:12px}.user-box input{min-width:110px;padding:7px 9px;font-size:13px}
 .status-OK{color:var(--green);font-weight:700}.status-DOWN{color:var(--red);font-weight:700}
-.count{font-size:12px;color:var(--muted);margin-top:8px}
+.count{font-size:12px;color:var(--muted)}
+.pager{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.pager-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.pager-controls label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.pager-controls select{min-width:70px;padding:6px 8px}.pager-controls button{padding:7px 11px;min-width:38px}.page-info{font-size:13px;font-weight:700;color:var(--navy);min-width:60px;text-align:center}
 
 @media(max-width:1100px){.grid-kpi{grid-template-columns:repeat(4,1fr)}.location-grid{grid-template-columns:repeat(4,1fr)}}
 
@@ -26,6 +29,9 @@ header{padding:12px 14px;flex-wrap:wrap;position:static}header h1{font-size:21px
 .toolbar{align-items:flex-start}.filters input,.filters select{flex:1;min-width:46%}
 .actions{width:100%}.actions button{flex:1}
 .user-box{width:100%}.user-box input{flex:1}
+.pager{justify-content:center}.pager-controls{width:100%;justify-content:center}
+.pager-controls label{flex:1 0 100%;justify-content:center;white-space:nowrap;margin-bottom:4px}
+.pager-controls button{flex:1 1 0;min-width:0}.page-info{flex:0 0 auto;min-width:56px}
 /* La tabla del tablero se convierte en tarjetas: una por equipo */
 .table-wrap.board{max-height:none;border:0;overflow:visible}
 .board table{min-width:0;display:block;font-size:13px}

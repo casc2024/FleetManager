@@ -2,7 +2,8 @@
 // pero la data vive en PostgreSQL vía /api/*).
 let data = { equipos: [], catalogos: { ubicaciones: [], estados: [], cargas: [], camionesPorFamilia: {} }, historial: [], snapshots: [] };
 let selectedLocation = "";
-const USER_KEY = "fleet_manager_user";
+const USER_KEY = "fleet_manager_user", PAGE_KEY = "fleet_manager_page_size";
+let page = 1, pageSize = 10;
 
 const $ = id => document.getElementById(id);
 function fmt(v) { return v ? new Date(v).toLocaleString() : "—"; }
@@ -34,7 +35,17 @@ function truckSelector(r) {
 }
 
 function setupFilters() {
-    ["search", "fLoc", "fStatus", "fLoad"].forEach(id => $(id).addEventListener("input", renderTable));
+    ["search", "fLoc", "fStatus", "fLoad"].forEach(id => $(id).addEventListener("input", () => { page = 1; renderTable(); }));
+    try { const ps = parseInt(localStorage.getItem(PAGE_KEY)); if ([10, 20, 30, 50, 100].includes(ps)) pageSize = ps; } catch { }
+    $("pageSize").value = String(pageSize);
+    $("pageSize").addEventListener("change", () => {
+        pageSize = parseInt($("pageSize").value) || 10; page = 1; renderTable();
+        try { localStorage.setItem(PAGE_KEY, String(pageSize)); } catch { }
+    });
+    $("pgFirst").onclick = () => goPage(1);
+    $("pgPrev").onclick = () => goPage(page - 1);
+    $("pgNext").onclick = () => goPage(page + 1);
+    $("pgLast").onclick = () => goPage(Infinity);
     $("newSnapshot").onclick = makeSnapshot;
     $("exportCsv").onclick = () => { window.location.href = "/api/export.csv"; };
     try { $("userName").value = localStorage.getItem(USER_KEY) || ""; } catch { }
@@ -79,8 +90,19 @@ function renderLocations() {
     });
 }
 
+function goPage(n) {
+    const total = Math.max(1, Math.ceil(filtered().length / pageSize));
+    page = Math.min(Math.max(1, n), total);
+    renderTable();
+    $("fleetBody").closest(".panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function renderTable() {
-    const rows = filtered();
+    const all = filtered();
+    const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
+    if (page > totalPages) page = totalPages;
+    const start = (page - 1) * pageSize;
+    const rows = all.slice(start, start + pageSize);
     $("fleetBody").innerHTML = rows.map(r => `<tr data-eq="${esc(r.numeroEquipo)}">
 <td data-label="Equipment">${esc(r.numeroEquipo)}</td>
 <td data-label="Group">${esc(r.grupo)}</td>
@@ -91,7 +113,12 @@ function renderTable() {
 <td data-label="Updated By">${esc(r.actualizadoPor || "—")}</td>
 <td data-label="Updated At">${esc(fmt(r.fechaActualizacion))}</td>
 <td data-label="Action" class="action"><button class="primary saveRow">Save</button></td></tr>`).join("");
-    $("rowCount").textContent = `${rows.length} of ${data.equipos.length} equipment`;
+    $("rowCount").textContent = all.length
+        ? `Showing ${start + 1}–${start + rows.length} of ${all.length} equipment${all.length !== data.equipos.length ? ` (filtered from ${data.equipos.length})` : ""}`
+        : "No equipment matches the filters";
+    $("pageInfo").textContent = `${page} / ${totalPages}`;
+    $("pgFirst").disabled = $("pgPrev").disabled = page <= 1;
+    $("pgNext").disabled = $("pgLast").disabled = page >= totalPages;
     document.querySelectorAll(".saveRow").forEach(b => b.onclick = () => saveRow(b.closest("tr"), b));
 }
 
