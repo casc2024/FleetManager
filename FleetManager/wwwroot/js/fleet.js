@@ -14,6 +14,23 @@ function options(arr, current, blank = "—") { return `<option value="">${blank
 function codigos(lista) { return lista.map(x => x.codigo); }
 function isTrailer(r) { return !r.esCamion; }
 
+// Desglose de los KPIs por tipo de equipo (grupo de la base: es_camion + familia)
+const GRUPOS_KPI = [
+    { etiqueta: "CT", test: r => !r.esCamion && r.familia === "CT" },
+    { etiqueta: "T", test: r => !r.esCamion && r.familia === "T" },
+    { etiqueta: "ED Trucks", test: r => r.esCamion && r.familia === "T" },
+    { etiqueta: "Pneumatic Trucks", test: r => r.esCamion && r.familia === "CT" }
+];
+// "OK" se muestra como "Operational" en toda la interfaz (el valor guardado sigue siendo OK)
+function etiquetaEstado(codigo) { return codigo === "OK" ? "Operational" : codigo; }
+
+// El Load (CEMENT / ASH / EMPTY) solo aplica a los equipos neumáticos (familia CT).
+// Los de familia T (T trailers y ED Trucks) no llevan carga: se muestra "—".
+function aplicaCarga(r) { return r.familia === "CT"; }
+
+// Color de las barras de Load (prevalece sobre el color guardado en la base)
+const COLOR_CARGA = { CEMENT: "#2f6fb3", ASH: "#d68124", EMPTY: "#c33d3d" };
+
 async function api(url, body) {
     const res = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
     const json = await res.json().catch(() => ({}));
@@ -70,13 +87,24 @@ function filtered() {
 
 function render() { renderFilterOptions(); renderKpis(); renderLocations(); renderTable(); renderCharts(); renderHistory(); renderSnapshots(); }
 
+function desglose(id, filtro) {
+    $(id).innerHTML = GRUPOS_KPI.map(g => {
+        const n = data.equipos.filter(r => g.test(r) && filtro(r)).length;
+        return `<div><span>${esc(g.etiqueta)}</span><b>${n}</b></div>`;
+    }).join("");
+}
+
 function renderKpis() {
     const f = data.equipos, t = f.length, ok = f.filter(x => x.estado === "OK").length, down = f.filter(x => x.estado === "DOWN").length;
     $("kTotal").textContent = t; $("kOk").textContent = ok; $("kDown").textContent = down;
+    desglose("bTotal", () => true);
+    desglose("bOk", r => r.estado === "OK");
+    desglose("bDown", r => r.estado === "DOWN");
     $("kAvail").textContent = (t ? ok / t * 100 : 0).toFixed(1) + "%";
-    $("kCement").textContent = f.filter(x => x.carga === "CEMENT").length;
-    $("kAsh").textContent = f.filter(x => x.carga === "ASH").length;
-    $("kEmpty").textContent = f.filter(x => x.carga === "EMPTY").length;
+    const conCarga = f.filter(aplicaCarga);
+    $("kCement").textContent = conCarga.filter(x => x.carga === "CEMENT").length;
+    $("kAsh").textContent = conCarga.filter(x => x.carga === "ASH").length;
+    $("kEmpty").textContent = conCarga.filter(x => x.carga === "EMPTY").length;
 }
 
 function renderLocations() {
@@ -109,7 +137,7 @@ function renderTable() {
 <td data-label="Truck / Trailer">${truckSelector(r)}</td>
 <td data-label="Location"><select class="loc">${options(codigos(data.catalogos.ubicaciones), r.ubicacion)}</select></td>
 <td data-label="Status"><select class="status">${options(codigos(data.catalogos.estados), r.estado)}</select></td>
-<td data-label="Load"><select class="load">${options(codigos(data.catalogos.cargas), r.carga)}</select></td>
+<td data-label="Load">${aplicaCarga(r) ? `<select class="load">${options(codigos(data.catalogos.cargas), r.carga)}</select>` : '<span class="na">—</span>'}</td>
 <td data-label="Updated By">${esc(r.actualizadoPor || "—")}</td>
 <td data-label="Updated At">${esc(fmt(r.fechaActualizacion))}</td>
 <td data-label="Action" class="action"><button class="primary saveRow">Save</button></td></tr>`).join("");
@@ -123,13 +151,13 @@ function renderTable() {
 }
 
 async function saveRow(tr, btn) {
-    const truckEl = tr.querySelector(".truck");
+    const truckEl = tr.querySelector(".truck"), loadEl = tr.querySelector(".load");
     const body = {
         numeroEquipo: tr.dataset.eq,
         camion: truckEl ? truckEl.value : null,
         ubicacion: tr.querySelector(".loc").value,
         estado: tr.querySelector(".status").value,
-        carga: tr.querySelector(".load").value,
+        carga: loadEl ? loadEl.value : null,
         usuario: usuario()
     };
     btn.disabled = true;
@@ -154,10 +182,56 @@ function drawBars(canvasId, items) {
     });
 }
 
+function drawDonut(id, items) {
+    const c = $(id), ctx = c.getContext("2d"), w = c.width, h = c.height;
+    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 6, inner = r * 0.64;
+    const total = items.reduce((s, x) => s + x.v, 0);
+    ctx.clearRect(0, 0, w, h);
+    let a = -Math.PI / 2;
+    if (total === 0) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = "#e8eff7"; ctx.fill(); }
+    items.forEach(it => {
+        const ang = (it.v / total) * Math.PI * 2;
+        if (!ang) return;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, a, a + ang); ctx.closePath();
+        ctx.fillStyle = it.color; ctx.fill();
+        a += ang;
+    });
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = "source-over";
+    const pct = total ? items[0].v / total * 100 : 0;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#1d2733"; ctx.font = "bold 62px Segoe UI, Arial";
+    ctx.fillText(pct.toFixed(1) + "%", cx, cy + 10);
+    ctx.fillStyle = "#6b7785"; ctx.font = "26px Segoe UI, Arial";
+    ctx.fillText(items[0].v + " of " + total, cx, cy + 48);
+}
+
+function renderStatusBreak() {
+    const f = data.equipos;
+    const ok = c => c.estado === "OK", down = c => c.estado === "DOWN";
+    const celda = (n, base) => `<div class="num"><b>${n}</b><i>${base ? (n / base * 100).toFixed(0) + "%" : "—"}</i></div>`;
+    let html = '<div class="hd"></div><div class="hd ok">Operational</div><div class="hd down">Down</div>';
+    GRUPOS_KPI.forEach(g => {
+        const grupo = f.filter(g.test), t = grupo.length;
+        html += `<div class="lbl">${esc(g.etiqueta)}</div>${celda(grupo.filter(ok).length, t)}${celda(grupo.filter(down).length, t)}`;
+    });
+    const t = f.length;
+    html += `<div class="lbl tot">Total</div><div class="tot">${celda(f.filter(ok).length, t)}</div><div class="tot">${celda(f.filter(down).length, t)}</div>`;
+    $("statusBreak").innerHTML = html;
+}
+
 function renderCharts() {
     const f = data.equipos;
-    drawBars("statusChart", data.catalogos.estados.map(s => ({ label: s.codigo, v: f.filter(x => x.estado === s.codigo).length, color: s.colorHex || "#2f6fb3" })));
-    drawBars("loadChart", data.catalogos.cargas.map(s => ({ label: s.codigo, v: f.filter(x => x.carga === s.codigo).length, color: s.colorHex || "#6b7280" })));
+    drawBars("statusChart", data.catalogos.estados.map(s => ({ label: etiquetaEstado(s.codigo), v: f.filter(x => x.estado === s.codigo).length, color: s.colorHex || "#2f6fb3" })));
+    const nOk = f.filter(x => x.estado === "OK").length, nDown = f.filter(x => x.estado === "DOWN").length;
+    const sinEstado = f.length - nOk - nDown;   // equipos sin Status, para que el % coincida con Availability
+    const rueda = [{ label: "Operational", v: nOk, color: "#18864b" }, { label: "Down", v: nDown, color: "#c33d3d" }];
+    if (sinEstado > 0) rueda.push({ label: "No status", v: sinEstado, color: "#d7dfe8" });
+    drawDonut("statusDonut", rueda);
+    renderStatusBreak();
+    const conCarga = f.filter(aplicaCarga);
+    drawBars("loadChart", data.catalogos.cargas.map(s => ({ label: s.codigo, v: conCarga.filter(x => x.carga === s.codigo).length, color: COLOR_CARGA[s.codigo] || s.colorHex || "#6b7280" })));
 }
 
 function renderHistory() {

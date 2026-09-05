@@ -233,7 +233,8 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
         string? camionNuevo = esCamion ? camionActual : Vacio(req.Camion);
         string? ubicNueva = Vacio(req.Ubicacion);
         string? estadoNuevo = Vacio(req.Estado);
-        string? cargaNueva = Vacio(req.Carga);
+        // El Load (CEMENT/ASH/EMPTY) solo aplica a los equipos neumáticos (familia CT).
+        string? cargaNueva = familia == "CT" ? Vacio(req.Carga) : null;
 
         var cambios = new List<(string campo, string? viejo, string? nuevo)>();
         if (camionNuevo != camionActual) cambios.Add(("Truck", camionActual, camionNuevo));
@@ -339,9 +340,9 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
                    count(*) FILTER (WHERE estado = 'OK'),
                    count(*) FILTER (WHERE estado = 'DOWN'),
                    ROUND(CASE WHEN count(*) = 0 THEN 0 ELSE count(*) FILTER (WHERE estado = 'OK') * 100.0 / count(*) END, 1),
-                   count(*) FILTER (WHERE carga = 'CEMENT'),
-                   count(*) FILTER (WHERE carga = 'ASH'),
-                   count(*) FILTER (WHERE carga = 'EMPTY')
+                   count(*) FILTER (WHERE carga = 'CEMENT' AND familia = 'CT'),
+                   count(*) FILTER (WHERE carga = 'ASH' AND familia = 'CT'),
+                   count(*) FILTER (WHERE carga = 'EMPTY' AND familia = 'CT')
             FROM flota.v_tablero_flota
             RETURNING fecha, total, cantidad_ok, cantidad_down, disponibilidad, cantidad_cement, cantidad_ash, cantidad_empty", cn, tx);
 

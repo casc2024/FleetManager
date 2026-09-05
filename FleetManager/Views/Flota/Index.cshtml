@@ -18,9 +18,9 @@
 </header>
 <main>
 <section class="grid-kpi">
-  <div class="kpi"><span>Total Equipment</span><strong id="kTotal">—</strong></div>
-  <div class="kpi"><span>OK</span><strong id="kOk">—</strong></div>
-  <div class="kpi"><span>DOWN</span><strong id="kDown">—</strong></div>
+  <div class="kpi wide"><span>Total Equipment</span><strong id="kTotal">—</strong><div class="kpi-break" id="bTotal"></div></div>
+  <div class="kpi wide"><span>Operational</span><strong id="kOk">—</strong><div class="kpi-break" id="bOk"></div></div>
+  <div class="kpi wide"><span>DOWN</span><strong id="kDown">—</strong><div class="kpi-break" id="bDown"></div></div>
   <div class="kpi"><span>Availability</span><strong id="kAvail">—</strong></div>
   <div class="kpi"><span>CEMENT</span><strong id="kCement">—</strong></div>
   <div class="kpi"><span>ASH</span><strong id="kAsh">—</strong></div>
@@ -30,7 +30,13 @@
 <section class="panel"><h2>Location Overview</h2><div id="locationGrid" class="location-grid"></div></section>
 
 <section class="charts">
-  <div class="panel"><h2>Status Overview</h2><canvas id="statusChart" width="700" height="250"></canvas></div>
+  <div class="panel"><h2>Status Overview</h2>
+    <canvas id="statusChart" width="700" height="250"></canvas>
+    <div class="donut-row">
+      <canvas id="statusDonut" class="donut" width="400" height="400"></canvas>
+      <div class="sbreak" id="statusBreak"></div>
+    </div>
+  </div>
   <div class="panel"><h2>Load Overview</h2><canvas id="loadChart" width="700" height="250"></canvas></div>
 </section>
 
