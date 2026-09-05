@@ -1,0 +1,70 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17324d">
+<title>Fleet Manager</title>
+<link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
+</head>
+<body>
+<header>
+  <div><h1>Fleet Manager</h1><small>PC + Mobile Fleet Control</small></div>
+  <div class="user-box"><label for="userName">Your name</label><input id="userName" placeholder="Owner" maxlength="100" autocomplete="name"></div>
+  <div class="actions"><button class="secondary" id="newSnapshot">Weekly Snapshot</button><button class="secondary" id="exportCsv">Export CSV</button></div>
+</header>
+<main>
+<section class="grid-kpi">
+  <div class="kpi"><span>Total Equipment</span><strong id="kTotal">—</strong></div>
+  <div class="kpi"><span>OK</span><strong id="kOk">—</strong></div>
+  <div class="kpi"><span>DOWN</span><strong id="kDown">—</strong></div>
+  <div class="kpi"><span>Availability</span><strong id="kAvail">—</strong></div>
+  <div class="kpi"><span>CEMENT</span><strong id="kCement">—</strong></div>
+  <div class="kpi"><span>ASH</span><strong id="kAsh">—</strong></div>
+  <div class="kpi"><span>EMPTY</span><strong id="kEmpty">—</strong></div>
+</section>
+
+<section class="panel"><h2>Location Overview</h2><div id="locationGrid" class="location-grid"></div></section>
+
+<section class="charts">
+  <div class="panel"><h2>Status Overview</h2><canvas id="statusChart" width="700" height="250"></canvas></div>
+  <div class="panel"><h2>Load Overview</h2><canvas id="loadChart" width="700" height="250"></canvas></div>
+</section>
+
+<section class="panel">
+  <div class="toolbar">
+    <div><h2 style="margin-bottom:4px">Fleet Control Board</h2><small style="color:var(--muted)">Equipment Number is locked. Trailer rows can assign a Truck from the dropdown. Truck rows automatically show the trailer they are pulling.</small></div>
+    <div class="filters">
+      <input id="search" placeholder="Search equipment or truck">
+      <select id="fLoc"><option value="">All Locations</option></select>
+      <select id="fStatus"><option value="">All Status</option></select>
+      <select id="fLoad"><option value="">All Loads</option></select>
+    </div>
+  </div>
+  <div class="table-wrap board">
+    <table>
+      <thead><tr><th>Equipment Number 🔒</th><th>Group</th><th>Truck / Pulling Trailer</th><th>Location</th><th>Status</th><th>Load</th><th>Updated By</th><th>Updated At</th><th>Action</th></tr></thead>
+      <tbody id="fleetBody"></tbody>
+    </table>
+  </div>
+  <div class="count" id="rowCount"></div>
+</section>
+
+<section class="panel"><h2>Weekly Snapshots</h2>
+  <div class="table-wrap" style="max-height:280px">
+    <table style="min-width:760px">
+      <thead><tr><th>Date</th><th>Total</th><th>OK</th><th>DOWN</th><th>Availability</th><th>CEMENT</th><th>ASH</th><th>EMPTY</th></tr></thead>
+      <tbody id="snapshotBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel"><h2>Recent Activity</h2><div id="history" class="history"><div class="hist">Loading…</div></div></section>
+</main>
+<div id="toast" class="toast"></div>
+<script src="~/js/fleet.js" asp-append-version="true"></script>
+</body>
+</html>
