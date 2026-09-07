@@ -109,8 +109,18 @@ function renderKpis() {
 
 function renderLocations() {
     $("locationGrid").innerHTML = codigos(data.catalogos.ubicaciones).map(l => {
-        const rows = data.equipos.filter(x => x.ubicacion === l), ok = rows.filter(x => x.estado === "OK").length, down = rows.filter(x => x.estado === "DOWN").length;
-        return `<div class="loc-card ${selectedLocation === l ? "active" : ""}" data-loc="${esc(l)}"><b>${esc(l)}</b><small>Total ${rows.length}<br>OK ${ok} · DOWN ${down}</small></div>`;
+        const rows = data.equipos.filter(x => x.ubicacion === l),
+            ok = rows.filter(x => x.estado === "OK").length,
+            down = rows.filter(x => x.estado === "DOWN").length;
+        // Desglose por tipo de equipo: cuántos operativos y cuántos down en esta planta
+        const detalle = GRUPOS_KPI.map(g => {
+            const grupo = rows.filter(g.test);
+            const gOk = grupo.filter(x => x.estado === "OK").length, gDown = grupo.filter(x => x.estado === "DOWN").length;
+            return `<span class="lb">${esc(g.etiqueta)}</span><span class="v ok">${gOk}</span><span class="v dn">${gDown}</span>`;
+        }).join("");
+        return `<div class="loc-card ${selectedLocation === l ? "active" : ""}" data-loc="${esc(l)}">
+<b>${esc(l)}</b><small>Total ${rows.length}<br>Operational ${ok} · Down ${down}</small>
+<div class="loc-break"><span class="lb hd"></span><span class="hd ok">OP</span><span class="hd dn">DOWN</span>${detalle}</div></div>`;
     }).join("");
     document.querySelectorAll(".loc-card").forEach(c => c.onclick = () => {
         selectedLocation = selectedLocation === c.dataset.loc ? "" : c.dataset.loc;
