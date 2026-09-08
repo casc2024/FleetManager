@@ -231,6 +231,21 @@ function renderStatusBreak() {
     $("statusBreak").innerHTML = html;
 }
 
+// Detalle de los equipos cargados: qué CT lleva CEMENT y cuál ASH, con su planta y su pareja
+function renderLoadDetail(conCarga) {
+    const grupos = [["CEMENT", "cement"], ["ASH", "ash"]];
+    $("loadDetail").innerHTML = grupos.map(([codigo, cls]) => {
+        const eq = conCarga.filter(r => r.carga === codigo)
+            .sort((a, b) => a.numeroEquipo.localeCompare(b.numeroEquipo, undefined, { numeric: true }));
+        const chips = eq.length ? eq.map(r => {
+            const pareja = r.esCamion ? r.numeroRemolque : r.numeroCamion;
+            const det = [r.ubicacion || "—"].concat(pareja ? [pareja] : []).join(" · ");
+            return `<span class="chip ${cls}">${esc(r.numeroEquipo)}<small>${esc(det)}</small></span>`;
+        }).join("") : '<span class="ld-empty">No equipment loaded</span>';
+        return `<div class="ld-group"><h3 class="${cls}">${codigo} · ${eq.length}</h3><div class="ld-chips">${chips}</div></div>`;
+    }).join("");
+}
+
 function renderCharts() {
     const f = data.equipos;
     drawBars("statusChart", data.catalogos.estados.map(s => ({ label: etiquetaEstado(s.codigo), v: f.filter(x => x.estado === s.codigo).length, color: s.colorHex || "#2f6fb3" })));
@@ -242,6 +257,7 @@ function renderCharts() {
     renderStatusBreak();
     const conCarga = f.filter(aplicaCarga);
     drawBars("loadChart", data.catalogos.cargas.map(s => ({ label: s.codigo, v: conCarga.filter(x => x.carga === s.codigo).length, color: COLOR_CARGA[s.codigo] || s.colorHex || "#6b7280" })));
+    renderLoadDetail(conCarga);
 }
 
 function renderHistory() {
