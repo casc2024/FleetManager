@@ -1,0 +1,64 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101d38">
+<meta name="description" content="Daily mixer truck control by plant, status, and availability">
+<title>NBR Ready Mix — Fleet Control</title>
+<link rel="icon" type="image/png" href="~/img/logo.png">
+<link rel="apple-touch-icon" href="~/img/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="~/css/mixer.css" asp-append-version="true">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo"><img src="~/img/logo.png" alt="NBR Ready Mix"></span>
+    <div><strong>NBR Ready Mix</strong><small>Operations Control</small></div>
+  </div>
+  <div class="top-actions">
+    <span class="live"><i></i> Active operation</span>
+    <span class="user-mini"><label for="userName">You</label><input id="userName" placeholder="Owner" maxlength="100" autocomplete="name"></span>
+    <a class="link-btn" href="/">Fleet Manager</a>
+    <button class="icon-btn" id="reloadBtn" title="Reload data">&#8635;</button>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div>
+      <p class="eyebrow">NBR OPERATIONS</p>
+      <h1>Daily Fleet Status</h1>
+      <p>Manage availability and assignments by plant.</p>
+    </div>
+    <div class="date-card"><span>Updated</span><strong id="updatedAt">—</strong></div>
+  </section>
+
+  <nav class="tabs" aria-label="Sections">
+    <button class="tab active" data-view="dashboard">Overview</button>
+    <button class="tab" data-view="plants">Plants</button>
+    <button class="tab" data-view="trucks">Mixer trucks</button>
+    <button class="tab" data-view="drivers">Drivers</button>
+    @* Pestaña "Email report" oculta: el envío programado sigue funcionando en segundo plano.
+       Para volver a mostrarla, descomente la línea siguiente. *@
+    @* <button class="tab" data-view="report">Email report</button> *@
+  </nav>
+
+  <section id="dashboard" class="view active"></section>
+  <section id="plants" class="view"></section>
+  <section id="trucks" class="view"></section>
+  <section id="drivers" class="view"></section>
+  <section id="report" class="view"></section>
+</main>
+
+<div id="toast" role="status"></div>
+<script src="~/js/mixer.js" asp-append-version="true"></script>
+</body>
+</html>

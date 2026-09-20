@@ -6,17 +6,32 @@ data persistida en PostgreSQL. Responsive: en celular el tablero se muestra como
 
 ## Estructura
 
+La aplicación tiene **dos módulos independientes**:
+
+| Módulo | Ruta | Esquema en la base |
+|---|---|---|
+| **Fleet Manager** (R&R Trucking: camiones y remolques) | `/` | `flota` |
+| **NBR Ready Mix** (mezcladoras por planta, conductores e informe por correo) | `/mixer` | `mezcladoras` |
+
 ```
 FleetManager/
-├── Controllers/FlotaController.cs      Vista principal + API JSON (/api/datos, /api/guardar, /api/snapshot, /api/export.csv)
-├── Services/IFlotaRepositorio.cs       Contrato de acceso a datos
-├── Services/FlotaRepositorioPostgres.cs Implementación Npgsql (transacciones + auditoría usuario/IP)
-├── Models/Modelos.cs                    DTOs
-├── Views/Flota/Index.cshtml             Página (mismo HTML del original)
-├── wwwroot/css/fleet.css                Estilos del original + modo tarjetas para móvil
-├── wwwroot/js/fleet.js                  Lógica del tablero (fetch a la API en vez de localStorage)
-├── Dockerfile / railway.json            Despliegue en Railway
-└── Program.cs                           Arranque: PORT, DATABASE_URL, X-Forwarded-For
+├── Controllers/FlotaController.cs          Fleet Manager: vista + API (/api/datos, /api/guardar, …)
+├── Controllers/MezcladorasController.cs    NBR Ready Mix: vista + API (/api/mixer/…)
+├── Services/IFlotaRepositorio.cs           Contrato de acceso a datos (flota)
+├── Services/FlotaRepositorioPostgres.cs    Implementación Npgsql (transacciones + auditoría usuario/IP)
+├── Services/IMezcladorasRepositorio.cs     Contrato de acceso a datos (mezcladoras)
+├── Services/MezcladorasRepositorioPostgres.cs  Implementación Npgsql del módulo de mezcladoras
+├── Services/ConstructorReporteOverview.cs  HTML del informe Overview que se envía por correo
+├── Services/ServicioCorreo.cs              Envío por SMTP o por la API de Resend
+├── Services/ServicioReporteMezcladoras.cs  Armado del informe + TareaReporteProgramado (BackgroundService)
+├── Models/Modelos.cs                       DTOs de Fleet Manager
+├── Models/ModelosMezcladoras.cs            DTOs de NBR Ready Mix
+├── Views/Flota/Index.cshtml                Tablero de flota
+├── Views/Mezcladoras/Index.cshtml          Tablero de mezcladoras (Overview, Plants, Mixer trucks, Drivers, Email report)
+├── wwwroot/css/fleet.css · js/fleet.js     Frontend de Fleet Manager
+├── wwwroot/css/mixer.css · js/mixer.js     Frontend de NBR Ready Mix
+├── Dockerfile / railway.json               Despliegue en Railway
+└── Program.cs                              Arranque: PORT, DATABASE_URL, X-Forwarded-For, servicios y scheduler
 ```
 
 La app **no crea tablas ni carga datos**: se conecta a la base PostgreSQL indicada en
@@ -31,6 +46,59 @@ La base cargada inicialmente con `cargar_datos_fleet.py` quedó con la estructur
 (pestaña *Database → Data* de Railway o tu cliente SQL): reorganiza toda esa data en la
 estructura definitiva, deduce el grupo de cada equipo, recupera el emparejamiento
 camión-remolque y elimina las tablas antiguas. Corre en una transacción: si falla, no cambia nada.
+
+## NBR Ready Mix — mezcladoras (`/mixer`)
+
+Réplica del tablero *Daily Fleet Status* con la data en PostgreSQL:
+
+- **Overview**: KPIs (Mixer Trucks, Drivers, Manned, Down, Open Trucks), donut de distribución,
+  tarjetas por planta y actividad reciente.
+- **Plants**: detalle de cada planta con sus camiones, estados y conductores.
+- **Mixer trucks**: alta/baja de camiones, búsqueda, filtros por planta y estado, cambio de planta y
+  estado, y asignación de varios conductores por camión.
+- **Drivers**: alta/baja de conductores, asignación de planta y camión.
+- **Email report**: envío del Overview por correo, manual o programado.
+
+Reglas de negocio (iguales a la página original, validadas también en la base):
+
+- Un camión puede tener varios conductores; un conductor tiene a lo más un camión.
+- No se puede asignar un conductor a un camión en estado **Down** (trigger `fn_valida_conductor_camion`).
+- Al asignar un conductor a un camión, hereda la planta del camión; al cambiar la planta del camión,
+  sus conductores se mueven con él.
+- Al poner un camión en Down con conductores asignados, la app avisa para reasignarlos.
+
+### Preparar la base (una vez)
+
+```cmd
+psql "postgresql://usuario:clave@host:puerto/bd" -f db/mezcladoras_esquema.sql
+```
+
+Crea el esquema `mezcladoras` con auditoría, vistas, las reglas y la carga inicial
+(7 plantas, 95 camiones, 53 conductores). Es idempotente y la app nunca lo ejecuta.
+
+### Envío del informe por correo
+
+El correo sale del propio servicio web. Configure en Railway → **Variables**:
+
+| Variable | Uso |
+|---|---|
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Servidor SMTP (Gmail, Outlook 365, SendGrid, Brevo, Mailgun…). Puerto 587 por omisión. |
+| `SMTP_SSL` | `false` para desactivar STARTTLS (por defecto activado). |
+| `MAIL_FROM`, `MAIL_FROM_NAME` | Remitente. |
+| `RESEND_API_KEY` | Alternativa por HTTPS: si está presente se usa la API de Resend en vez de SMTP. |
+| `APP_PUBLIC_URL` | URL pública, para el botón "Open the control board" del correo. |
+| `REPORTE_SCHEDULER` | `0` desactiva la tarea programada dentro de la app. |
+| `REPORTE_TOKEN` | Habilita `POST /api/mixer/reporte/cron?token=…` para dispararlo desde un cron externo. |
+
+Con Gmail hay que usar una **contraseña de aplicación** (no la del correo) y tener la verificación
+en dos pasos activada. Si el proveedor SMTP diera problemas en Railway, `RESEND_API_KEY` evita el
+tema de puertos porque envía por HTTPS.
+
+**Horario**: se configura desde la propia página (pestaña *Email report*): activar/desactivar, hora,
+días de la semana, zona horaria (`America/Chicago` por omisión), asunto y destinatarios (TO/CC/BCC).
+Un `BackgroundService` revisa cada minuto y envía cuando corresponde; la reclamación del envío es
+atómica en la base, así que aunque haya varias réplicas el correo sale una sola vez. Cada envío queda
+registrado en `mezcladoras.reporte_envio` y se ve en la misma página.
 
 ## Modelo de datos (esquema `flota`)
 
@@ -90,6 +158,21 @@ Variables de entorno soportadas:
 | POST | `/api/snapshot` | `{ usuario }` — botón Weekly Snapshot |
 | GET | `/api/export.csv` | Export CSV |
 | GET | `/health` | Healthcheck |
+
+### NBR Ready Mix (`/mixer`)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/mixer` | Tablero de mezcladoras |
+| GET | `/api/mixer/datos` | Camiones, conductores, catálogos, resumen e historial |
+| POST | `/api/mixer/camion/agregar` · `/actualizar` · `/eliminar` | Alta, cambio de planta/estado y baja |
+| POST | `/api/mixer/conductor/agregar` · `/actualizar` · `/eliminar` | Alta, cambios y baja de conductores |
+| POST | `/api/mixer/conductor/asignar` · `/quitar` | Asignar o quitar un conductor de un camión |
+| GET/POST | `/api/mixer/reporte/config` | Configuración del informe y destinatarios |
+| GET | `/api/mixer/reporte/preview` | Vista previa HTML del correo |
+| POST | `/api/mixer/reporte/enviar` | Enviar ahora (o `correoPrueba` para una copia de prueba) |
+| POST | `/api/mixer/reporte/cron?token=…` | Disparo desde un cron externo |
+| GET | `/api/mixer/export.csv` | Export CSV de camiones y conductores |
 
 ## Notas
 

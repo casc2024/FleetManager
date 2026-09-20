@@ -260,11 +260,46 @@ function renderCharts() {
     renderLoadDetail(conCarga);
 }
 
+// ------------------------------------------------------------- paginación
+// Grillas secundarias (Recent Activity y Weekly Snapshots): 10 registros por hoja.
+const TAMANOS = [10, 20, 30, 50, 100];
+const paginas = { hist: { pagina: 1, tam: 10 }, snap: { pagina: 1, tam: 10 } };
+
+function pgPagina(clave, lista) {
+    const s = paginas[clave], totalPag = Math.max(1, Math.ceil(lista.length / s.tam));
+    s.pagina = Math.min(Math.max(1, s.pagina), totalPag);
+    const i = (s.pagina - 1) * s.tam;
+    return lista.slice(i, i + s.tam);
+}
+
+function pgBarra(clave, n, etiqueta) {
+    const s = paginas[clave], totalPag = Math.max(1, Math.ceil(n / s.tam));
+    const desde = n ? (s.pagina - 1) * s.tam + 1 : 0, hasta = Math.min(s.pagina * s.tam, n);
+    const b = (txt, destino, off, titulo) =>
+        `<button type="button" class="secondary pg-btn" title="${titulo}" aria-label="${titulo}" ${off ? "disabled" : ""} onclick="irPagina('${clave}',${destino})">${txt}</button>`;
+    return `<div class="pager">
+      <div class="count">${n ? `${desde}–${hasta} of ${n} ${etiqueta}` : `No ${etiqueta}`}</div>
+      <div class="pager-controls">
+        <label>Rows per page <select onchange="cambiarTamPagina('${clave}',this.value)">
+          ${TAMANOS.map(t => `<option ${s.tam === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        ${b("&laquo;", 1, s.pagina <= 1, "First")}
+        ${b("&lsaquo;", s.pagina - 1, s.pagina <= 1, "Previous")}
+        <span class="page-info">${s.pagina} / ${totalPag}</span>
+        ${b("&rsaquo;", s.pagina + 1, s.pagina >= totalPag, "Next")}
+        ${b("&raquo;", totalPag, s.pagina >= totalPag, "Last")}
+      </div></div>`;
+}
+
+const REDIBUJA = { hist: () => renderHistory(), snap: () => renderSnapshots() };
+window.irPagina = (clave, p) => { paginas[clave].pagina = p; REDIBUJA[clave](); };
+window.cambiarTamPagina = (clave, v) => { paginas[clave].tam = parseInt(v) || 10; paginas[clave].pagina = 1; REDIBUJA[clave](); };
+
 function renderHistory() {
-    const h = $("history");
-    h.innerHTML = data.historial.length
-        ? data.historial.map(x => `<div class="hist"><b>${esc(x.numeroEquipo)}</b> · ${esc(x.campo)}: <b>${esc(x.valorAnterior || "—")}</b> → <b>${esc(x.valorNuevo || "—")}</b> · ${esc(x.usuario)} · ${esc(fmt(x.fecha))}</div>`).join("")
+    const lista = data.historial || [], visibles = pgPagina("hist", lista);
+    $("history").innerHTML = visibles.length
+        ? visibles.map(x => `<div class="hist"><b>${esc(x.numeroEquipo)}</b> · ${esc(x.campo)}: <b>${esc(x.valorAnterior || "—")}</b> → <b>${esc(x.valorNuevo || "—")}</b> · ${esc(x.usuario)} · ${esc(fmt(x.fecha))}</div>`).join("")
         : '<div class="hist">No changes yet.</div>';
+    $("historyPager").innerHTML = pgBarra("hist", lista.length, "changes");
 }
 
 async function makeSnapshot() {
@@ -275,9 +310,11 @@ async function makeSnapshot() {
 }
 
 function renderSnapshots() {
-    $("snapshotBody").innerHTML = data.snapshots.length
-        ? data.snapshots.map(s => `<tr><td>${esc(String(s.fecha).slice(0, 10))}</td><td>${s.total}</td><td>${s.ok}</td><td>${s.down}</td><td>${Number(s.disponibilidad).toFixed(1)}%</td><td>${s.cement}</td><td>${s.ash}</td><td>${s.empty}</td></tr>`).join("")
+    const lista = data.snapshots || [], visibles = pgPagina("snap", lista);
+    $("snapshotBody").innerHTML = visibles.length
+        ? visibles.map(s => `<tr><td data-label="Date">${esc(String(s.fecha).slice(0, 10))}</td><td data-label="Total">${s.total}</td><td data-label="Operational">${s.ok}</td><td data-label="DOWN">${s.down}</td><td data-label="Availability">${Number(s.disponibilidad).toFixed(1)}%</td><td data-label="CEMENT">${s.cement}</td><td data-label="ASH">${s.ash}</td><td data-label="EMPTY">${s.empty}</td></tr>`).join("")
         : '<tr><td colspan="8" style="color:var(--muted)">No snapshots yet.</td></tr>';
+    $("snapshotPager").innerHTML = pgBarra("snap", lista.length, "snapshots");
 }
 
 setupFilters();

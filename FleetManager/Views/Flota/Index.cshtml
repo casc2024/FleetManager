@@ -8,13 +8,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#17324d">
 <title>Fleet Manager</title>
+<link rel="icon" type="image/png" href="~/img/logo.png">
+<link rel="apple-touch-icon" href="~/img/logo.png">
 <link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
 </head>
 <body>
 <header>
-  <div><h1>Fleet Manager</h1><small>PC + Mobile Fleet Control</small></div>
+  <div class="brand">
+    <img class="logo" src="~/img/logo.png" alt="R&amp;R Trucking, Inc." asp-append-version="true">
+    <div><h1>Fleet Manager</h1><small>PC + Mobile Fleet Control</small></div>
+  </div>
   <div class="user-box"><label for="userName">Your name</label><input id="userName" placeholder="Owner" maxlength="100" autocomplete="name"></div>
-  <div class="actions"><button class="secondary" id="newSnapshot">Weekly Snapshot</button><button class="secondary" id="exportCsv">Export CSV</button></div>
+  <div class="actions"><a class="secondary" href="/mixer" style="text-decoration:none;display:inline-flex;align-items:center">Mixer Fleet</a><button class="secondary" id="newSnapshot">Weekly Snapshot</button><button class="secondary" id="exportCsv">Export CSV</button></div>
 </header>
 <main>
 <section class="grid-kpi">
@@ -75,15 +80,16 @@
 </section>
 
 <section class="panel"><h2>Weekly Snapshots</h2>
-  <div class="table-wrap" style="max-height:280px">
-    <table style="min-width:760px">
+  <div class="table-wrap board">
+    <table class="snapshots">
       <thead><tr><th>Date</th><th>Total</th><th>OK</th><th>DOWN</th><th>Availability</th><th>CEMENT</th><th>ASH</th><th>EMPTY</th></tr></thead>
       <tbody id="snapshotBody"></tbody>
     </table>
   </div>
+  <div id="snapshotPager"></div>
 </section>
 
-<section class="panel"><h2>Recent Activity</h2><div id="history" class="history"><div class="hist">Loading…</div></div></section>
+<section class="panel"><h2>Recent Activity</h2><div id="history" class="history"><div class="hist">Loading…</div></div><div id="historyPager"></div></section>
 </main>
 <div id="toast" class="toast"></div>
 <script src="~/js/fleet.js" asp-append-version="true"></script>
