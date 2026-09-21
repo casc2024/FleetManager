@@ -111,6 +111,28 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
 .driver-chip{display:inline-flex;align-items:center;gap:7px;background:var(--sky);color:#244377;border-radius:8px;padding:6px 8px;font-size:12px;font-weight:600}
 .driver-chip button{border:0;background:none;color:#8a99b5;font-size:16px;line-height:1;cursor:pointer;padding:0}
 .add-driver{display:flex;gap:7px}.add-driver select{max-width:190px}
+.add-driver select:disabled,.add-driver button:disabled{opacity:.55;cursor:not-allowed}
+
+/* Reglas de negocio: estado del camión y nota cuando no admite conductores */
+.table-select.status-manned{border-color:#18a87466;color:#136b4b;font-weight:600}
+.table-select.status-down{border-color:#e8535366;color:#b33434;font-weight:600}
+.table-select.status-open{border-color:#e99a2c66;color:#8a5210;font-weight:600}
+.rule-note{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);padding:7px 10px;border-radius:9px;background:#f4f6fa}
+.rule-note:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.rule-note.down{color:#b33434;background:#fff0f0}
+.rule-note.open{color:#8a5210;background:#fff6e8}
+
+/* Diálogo: conductor obligatorio al pasar a Manned */
+.modal{border:0;border-radius:16px;padding:0;width:min(440px,calc(100vw - 32px));box-shadow:0 24px 60px #0f1c3a40;color:var(--ink)}
+.modal::backdrop{background:#101d3899}
+.modal-body{padding:22px;display:grid;gap:10px}
+.modal-body h3{margin:0;font:800 19px Manrope,"Segoe UI",Arial,sans-serif}
+.modal-body p{margin:0 0 4px;color:var(--muted);font-size:14px;line-height:1.45}
+.modal-body label{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.modal-body select{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:15px inherit;background:#fff}
+.modal-hint{color:var(--muted);font-size:12px}
+.modal-error{color:var(--red);font-size:12px;min-height:14px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
 .primary-btn,.danger-btn{border:0;border-radius:10px;padding:10px 14px;font:700 13px inherit;cursor:pointer}
 .primary-btn{background:var(--blue);color:#fff}
 .primary-btn:disabled{opacity:.6;cursor:wait}
@@ -219,6 +241,9 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
   .add-driver select{max-width:none;min-width:0;flex:1 1 auto}
   .add-driver .primary-btn{flex:0 0 auto}
   .driver-chip{max-width:100%}
+  td>.rule-note{flex:1 1 auto;min-width:0;justify-content:flex-start}
+  .modal-actions{flex-direction:column-reverse}
+  .modal-actions button{width:100%;padding:12px}
   .table-wrap{border:0;background:none;overflow:visible}
   input,select,button{font-size:16px}
   /* Paginación en celular: contador arriba y controles a lo ancho */

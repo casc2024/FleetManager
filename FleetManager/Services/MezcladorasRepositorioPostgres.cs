@@ -234,35 +234,138 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         return Resultado.Bien($"Truck #{req.Numero} added");
     }
 
-    public async Task<Resultado> ActualizarCamionAsync(CamionRequest req, string usuario, string? ip, CancellationToken ct = default)
+    // ------------------------------------------------------------------
+    // Reglas de negocio camión ↔ conductor
+    //   1. Solo un camión Manned puede tener conductores.
+    //   2. Un camión Manned debe tener al menos un conductor.
+    //      → al pasar a Manned se asigna el conductor en la misma transacción;
+    //      → si un Manned se queda sin conductores, pasa a Open Trucks.
+    //   3. Al pasar a Open Trucks o Down se liberan sus conductores.
+    //   4. El conductor con camión hereda la planta del camión; si se le cambia
+    //      la planta a otra distinta, deja el camión.
+    // La base las valida también (triggers), esto da mensajes claros y
+    // aplica los ajustes automáticos en una sola transacción.
+    // ------------------------------------------------------------------
+
+    private record CamionInfo(long Id, int Numero, string? Planta, string Estado);
+    private record ConductorInfo(long Id, string Nombre);
+
+    /// <summary>Ejecuta el trabajo en una transacción con contexto de auditoría.
+    /// Si el trabajo devuelve error se revierte; si la base rechaza una regla
+    /// (check_violation) se devuelve su mensaje.</summary>
+    private async Task<Resultado> EnTransaccionAsync(string usuario, string? ip,
+        Func<NpgsqlConnection, NpgsqlTransaction, Task<Resultado>> trabajo, CancellationToken ct)
     {
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         await ContextoAsync(cn, tx, usuario, ip, ct);
+        try
+        {
+            var r = await trabajo(cn, tx);
+            if (r.Ok) await tx.CommitAsync(ct); else await tx.RollbackAsync(ct);
+            return r;
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23514")
+        {
+            return Resultado.Mal(ex.MessageText);
+        }
+    }
 
-        long idCamion; string? plantaActual, estadoActual;
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT c.id_camion, p.codigo, e.codigo
+    private static async Task<CamionInfo?> LeerCamionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, int numero, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT c.id_camion, c.numero, p.codigo, e.codigo
             FROM mezcladoras.camion c
             JOIN mezcladoras.estado_camion e ON e.id_estado = c.id_estado
             LEFT JOIN mezcladoras.planta p ON p.id_planta = c.id_planta
-            WHERE c.numero = @n FOR UPDATE OF c", cn, tx))
+            WHERE c.numero = @n FOR UPDATE OF c", cn, tx);
+        cmd.Parameters.AddWithValue("n", numero);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        if (!await rd.ReadAsync(ct)) return null;
+        return new CamionInfo(rd.GetInt64(0), rd.GetInt32(1), rd.IsDBNull(2) ? null : rd.GetString(2), rd.GetString(3));
+    }
+
+    private static async Task<List<ConductorInfo>> ConductoresDeAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long idCamion, CancellationToken ct)
+    {
+        var lista = new List<ConductorInfo>();
+        await using var cmd = new NpgsqlCommand(
+            "SELECT id_conductor, nombre FROM mezcladoras.conductor WHERE id_camion = @id AND activo ORDER BY nombre", cn, tx);
+        cmd.Parameters.AddWithValue("id", idCamion);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) lista.Add(new ConductorInfo(rd.GetInt64(0), rd.GetString(1)));
+        return lista;
+    }
+
+    /// <summary>Regla 2: si el camión es Manned y ya no tiene conductores, pasa a Open Trucks.
+    /// Devuelve el número del camión si cambió.</summary>
+    private static async Task<int?> AbrirSiQuedaSinConductoresAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long idCamion,
+        string usuario, string? ip, CancellationToken ct)
+    {
+        int numero;
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE mezcladoras.camion c
+               SET id_estado = (SELECT id_estado FROM mezcladoras.estado_camion WHERE codigo = 'open')
+             WHERE c.id_camion = @id
+               AND c.id_estado = (SELECT id_estado FROM mezcladoras.estado_camion WHERE codigo = 'manned')
+               AND NOT EXISTS (SELECT 1 FROM mezcladoras.conductor d WHERE d.id_camion = c.id_camion AND d.activo)
+         RETURNING c.numero", cn, tx))
         {
-            cmd.Parameters.AddWithValue("n", req.Numero);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            if (!await rd.ReadAsync(ct)) return Resultado.Mal("Truck not found");
-            idCamion = rd.GetInt64(0);
-            plantaActual = rd.IsDBNull(1) ? null : rd.GetString(1);
-            estadoActual = rd.GetString(2);
+            cmd.Parameters.AddWithValue("id", idCamion);
+            var r = await cmd.ExecuteScalarAsync(ct);
+            if (r is null or DBNull) return null;
+            numero = Convert.ToInt32(r);
         }
+        await HistorialAsync(cn, tx, "CAMION", "#" + numero, "Status", "manned", "open", usuario, ip, ct);
+        return numero;
+    }
+
+    private static string MensajeSoloManned(int numero, string estado) => estado == "down"
+        ? $"Truck #{numero} is Down. Drivers can only be assigned to Manned trucks."
+        : $"Truck #{numero} is Open. Set it to Manned in Mixer trucks (you'll choose the driver there) before assigning drivers.";
+
+    private static string Nombres(IEnumerable<ConductorInfo> lista) => string.Join(", ", lista.Select(x => x.Nombre));
+
+    private static string Unir(string principal, List<string> avisos) =>
+        avisos.Count == 0 ? principal + "." : principal + ". " + string.Join(". ", avisos) + ".";
+
+    public Task<Resultado> ActualizarCamionAsync(CamionRequest req, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
+    {
+        var cam = await LeerCamionAsync(cn, tx, req.Numero, ct);
+        if (cam is null) return Resultado.Mal("Truck not found");
 
         var plantaNueva = Vacio(req.Planta);
-        var estadoNuevo = string.IsNullOrWhiteSpace(req.Estado) ? estadoActual : req.Estado!.Trim();
+        var estadoNuevo = string.IsNullOrWhiteSpace(req.Estado) ? cam.Estado : req.Estado!.Trim().ToLowerInvariant();
+        if (estadoNuevo is not ("manned" or "down" or "open")) return Resultado.Mal("Invalid status");
 
-        var cambios = new List<string>();
-        if (plantaNueva != plantaActual) cambios.Add("Plant");
-        if (estadoNuevo != estadoActual) cambios.Add("Status");
-        if (cambios.Count == 0) return Resultado.Bien("No changes");
+        var conductores = await ConductoresDeAsync(cn, tx, cam.Id, ct);
+        var nuevoConductor = req.IdConductor is > 0 ? req.IdConductor : null;
+
+        if (plantaNueva == cam.Planta && estadoNuevo == cam.Estado && nuevoConductor is null)
+            return Resultado.Bien("No changes");
+
+        // Regla 2: Manned exige al menos un conductor
+        if (estadoNuevo == "manned" && conductores.Count == 0 && nuevoConductor is null)
+            return Resultado.Mal($"Truck #{cam.Numero}: a Manned truck must have at least one driver. Select the driver to assign.");
+        // Regla 1: solo los Manned llevan conductores
+        if (nuevoConductor is not null && estadoNuevo != "manned")
+            return Resultado.Mal(MensajeSoloManned(cam.Numero, estadoNuevo));
+
+        var avisos = new List<string>();
+
+        // Regla 3: Open / Down liberan a sus conductores
+        if (estadoNuevo != "manned" && conductores.Count > 0)
+        {
+            await using (var cmd = new NpgsqlCommand("UPDATE mezcladoras.conductor SET id_camion = NULL WHERE id_camion = @id", cn, tx))
+            {
+                cmd.Parameters.AddWithValue("id", cam.Id);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            foreach (var d in conductores)
+                await HistorialAsync(cn, tx, "CONDUCTOR", d.Nombre, "Truck", "#" + cam.Numero, "No truck", usuario, ip, ct);
+            avisos.Add($"{Nombres(conductores)} {(conductores.Count == 1 ? "was" : "were")} released from the truck");
+            conductores.Clear();
+        }
 
         await using (var cmd = new NpgsqlCommand(@"
             UPDATE mezcladoras.camion SET
@@ -271,100 +374,107 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
             WHERE id_camion = @id", cn, tx))
         {
             cmd.Parameters.AddWithValue("p", (object?)plantaNueva ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("e", estadoNuevo!);
-            cmd.Parameters.AddWithValue("id", idCamion);
-            if (await cmd.ExecuteNonQueryAsync(ct) == 0) return Resultado.Mal("Truck not found");
+            cmd.Parameters.AddWithValue("e", estadoNuevo);
+            cmd.Parameters.AddWithValue("id", cam.Id);
+            await cmd.ExecuteNonQueryAsync(ct);
         }
+        if (plantaNueva != cam.Planta)
+            await HistorialAsync(cn, tx, "CAMION", "#" + cam.Numero, "Plant", cam.Planta ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
+        if (estadoNuevo != cam.Estado)
+            await HistorialAsync(cn, tx, "CAMION", "#" + cam.Numero, "Status", cam.Estado, estadoNuevo, usuario, ip, ct);
 
-        // Al cambiar la planta del camión, sus conductores heredan esa planta
-        var conductoresMovidos = new List<string>();
-        if (plantaNueva != plantaActual)
+        // Regla 4: los conductores del camión se mueven con él a la nueva planta
+        if (plantaNueva != cam.Planta && conductores.Count > 0)
         {
-            await using var cmd = new NpgsqlCommand(@"
-                UPDATE mezcladoras.conductor
-                   SET id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
-                 WHERE id_camion = @id AND activo
-             RETURNING nombre", cn, tx);
-            cmd.Parameters.AddWithValue("p", (object?)plantaNueva ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("id", idCamion);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) conductoresMovidos.Add(rd.GetString(0));
+            await using (var cmd = new NpgsqlCommand(@"
+                UPDATE mezcladoras.conductor SET id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
+                 WHERE id_camion = @id AND activo", cn, tx))
+            {
+                cmd.Parameters.AddWithValue("p", (object?)plantaNueva ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("id", cam.Id);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            foreach (var d in conductores)
+                await HistorialAsync(cn, tx, "CONDUCTOR", d.Nombre, "Plant", cam.Planta ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
         }
 
-        if (plantaNueva != plantaActual)
-            await HistorialAsync(cn, tx, "CAMION", "#" + req.Numero, "Plant", plantaActual ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
-        if (estadoNuevo != estadoActual)
-            await HistorialAsync(cn, tx, "CAMION", "#" + req.Numero, "Status", estadoActual, estadoNuevo, usuario, ip, ct);
-        foreach (var nombre in conductoresMovidos)
-            await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Plant", plantaActual ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
-
-        // Si queda Down con conductores asignados, se avisa para reasignarlos
-        var asignados = new List<string>();
-        if (estadoNuevo == "down")
+        // Conductor elegido al pasar a Manned (o agregado a un Manned)
+        if (nuevoConductor is long idCond)
         {
-            await using var cmd = new NpgsqlCommand("SELECT nombre FROM mezcladoras.conductor WHERE id_camion = @id AND activo ORDER BY nombre", cn, tx);
-            cmd.Parameters.AddWithValue("id", idCamion);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) asignados.Add(rd.GetString(0));
+            string nombre; string? plantaAnt; long? idCamAnt; int? numCamAnt;
+            await using (var cmd = new NpgsqlCommand(@"
+                SELECT d.nombre, p.codigo, d.id_camion, c.numero
+                FROM mezcladoras.conductor d
+                LEFT JOIN mezcladoras.planta p ON p.id_planta = d.id_planta
+                LEFT JOIN mezcladoras.camion c ON c.id_camion = d.id_camion
+                WHERE d.id_conductor = @id AND d.activo FOR UPDATE OF d", cn, tx))
+            {
+                cmd.Parameters.AddWithValue("id", idCond);
+                await using var rd = await cmd.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct)) return Resultado.Mal("Driver not found");
+                nombre = rd.GetString(0);
+                plantaAnt = rd.IsDBNull(1) ? null : rd.GetString(1);
+                idCamAnt = rd.IsDBNull(2) ? null : rd.GetInt64(2);
+                numCamAnt = rd.IsDBNull(3) ? null : rd.GetInt32(3);
+            }
+
+            if (idCamAnt != cam.Id)
+            {
+                await using (var cmd = new NpgsqlCommand(@"
+                    UPDATE mezcladoras.conductor
+                       SET id_camion = @c, id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
+                     WHERE id_conductor = @id", cn, tx))
+                {
+                    cmd.Parameters.AddWithValue("c", cam.Id);
+                    cmd.Parameters.AddWithValue("p", (object?)plantaNueva ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("id", idCond);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+                await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Truck", numCamAnt.HasValue ? "#" + numCamAnt : "No truck", "#" + cam.Numero, usuario, ip, ct);
+                if (plantaAnt != plantaNueva)
+                    await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Plant", plantaAnt ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
+                avisos.Add($"{nombre} assigned");
+                if (idCamAnt is long anterior && await AbrirSiQuedaSinConductoresAsync(cn, tx, anterior, usuario, ip, ct) is int abierto)
+                    avisos.Add($"Truck #{abierto} changed to Open Trucks (no drivers left)");
+            }
         }
 
-        await tx.CommitAsync(ct);
+        return Resultado.Bien(Unir($"Truck #{cam.Numero} updated", avisos));
+    }, ct);
 
-        var aviso = asignados.Count > 0
-            ? $"Truck #{req.Numero} is Down. You need to reassign {(asignados.Count == 1 ? "the driver" : "the drivers")}: {string.Join(", ", asignados)} to another truck."
-            : null;
-        return Resultado.Bien("Truck updated in Overview and Plants", aviso);
-    }
-
-    public async Task<Resultado> EliminarCamionAsync(int numero, string usuario, string? ip, CancellationToken ct = default)
+    public Task<Resultado> EliminarCamionAsync(int numero, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
     {
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(ct);
-        await ContextoAsync(cn, tx, usuario, ip, ct);
+        var cam = await LeerCamionAsync(cn, tx, numero, ct);
+        if (cam is null) return Resultado.Mal("Truck not found");
 
-        long idCamion;
-        await using (var cmd = new NpgsqlCommand("SELECT id_camion FROM mezcladoras.camion WHERE numero = @n", cn, tx))
+        var liberados = await ConductoresDeAsync(cn, tx, cam.Id, ct);
+        await using (var cmd = new NpgsqlCommand("UPDATE mezcladoras.conductor SET id_camion = NULL WHERE id_camion = @id", cn, tx))
         {
-            cmd.Parameters.AddWithValue("n", numero);
-            var r = await cmd.ExecuteScalarAsync(ct);
-            if (r is null or DBNull) return Resultado.Mal("Truck not found");
-            idCamion = Convert.ToInt64(r);
+            cmd.Parameters.AddWithValue("id", cam.Id);
+            await cmd.ExecuteNonQueryAsync(ct);
         }
-
-        var liberados = new List<string>();
-        await using (var cmd = new NpgsqlCommand("UPDATE mezcladoras.conductor SET id_camion = NULL WHERE id_camion = @id RETURNING nombre", cn, tx))
-        {
-            cmd.Parameters.AddWithValue("id", idCamion);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) liberados.Add(rd.GetString(0));
-        }
-
         await using (var cmd = new NpgsqlCommand("DELETE FROM mezcladoras.camion WHERE id_camion = @id", cn, tx))
         {
-            cmd.Parameters.AddWithValue("id", idCamion);
+            cmd.Parameters.AddWithValue("id", cam.Id);
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
-        foreach (var nombre in liberados)
-            await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Truck", "#" + numero, null, usuario, ip, ct);
+        foreach (var d in liberados)
+            await HistorialAsync(cn, tx, "CONDUCTOR", d.Nombre, "Truck", "#" + numero, "No truck", usuario, ip, ct);
         await HistorialAsync(cn, tx, "CAMION", "#" + numero, "Baja", "#" + numero, null, usuario, ip, ct);
-
-        await tx.CommitAsync(ct);
         return Resultado.Bien($"Truck #{numero} removed");
-    }
+    }, ct);
 
     // ------------------------------------------------------------------
     // Conductores
     // ------------------------------------------------------------------
-    public async Task<Resultado> AgregarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
+    public Task<Resultado> AgregarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
     {
         var nombre = (req.Nombre ?? "").Trim();
         if (nombre.Length == 0) return Resultado.Mal("Enter the driver name");
         if (nombre.Length > 150) nombre = nombre[..150];
-
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(ct);
-        await ContextoAsync(cn, tx, usuario, ip, ct);
 
         await using (var cmd = new NpgsqlCommand("SELECT 1 FROM mezcladoras.conductor WHERE lower(nombre) = lower(@n)", cn, tx))
         {
@@ -372,55 +482,43 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
             if (await cmd.ExecuteScalarAsync(ct) != null) return Resultado.Mal("This driver is already on the list");
         }
 
-        // Si se le asigna camión, hereda la planta del camión (y el trigger valida que no esté Down)
+        // Con camión: debe ser Manned y el conductor hereda su planta
         long? idCamion = null;
         var planta = Vacio(req.Planta);
         if (req.NumeroCamion.HasValue)
         {
-            await using var cmd = new NpgsqlCommand(@"
-                SELECT c.id_camion, p.codigo FROM mezcladoras.camion c
-                LEFT JOIN mezcladoras.planta p ON p.id_planta = c.id_planta
-                WHERE c.numero = @num", cn, tx);
-            cmd.Parameters.AddWithValue("num", req.NumeroCamion.Value);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            if (!await rd.ReadAsync(ct)) return Resultado.Mal($"Truck #{req.NumeroCamion} does not exist");
-            idCamion = rd.GetInt64(0);
-            planta = rd.IsDBNull(1) ? null : rd.GetString(1);
+            var cam = await LeerCamionAsync(cn, tx, req.NumeroCamion.Value, ct);
+            if (cam is null) return Resultado.Mal($"Truck #{req.NumeroCamion} does not exist");
+            if (cam.Estado != "manned") return Resultado.Mal(MensajeSoloManned(cam.Numero, cam.Estado));
+            idCamion = cam.Id;
+            planta = cam.Planta;
         }
 
-        try
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO mezcladoras.conductor (nombre, id_camion, id_planta)
+            VALUES (@n, @idc, (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p))", cn, tx))
         {
-            await using var cmd = new NpgsqlCommand(@"
-                INSERT INTO mezcladoras.conductor (nombre, id_camion, id_planta)
-                VALUES (@n, @idc, (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p))", cn, tx);
             cmd.Parameters.AddWithValue("n", nombre);
             cmd.Parameters.AddWithValue("idc", (object?)idCamion ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p", (object?)planta ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync(ct);
         }
-        catch (PostgresException ex) when (ex.SqlState == "23514")
-        {
-            return Resultado.Mal($"Truck #{req.NumeroCamion} is Down. You must first change the truck status to Manned before assigning a driver.");
-        }
 
         await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Alta", null,
-            req.NumeroCamion.HasValue ? "#" + req.NumeroCamion : (Vacio(req.Planta) ?? "Unassigned"), usuario, ip, ct);
-        await tx.CommitAsync(ct);
+            req.NumeroCamion.HasValue ? "#" + req.NumeroCamion : (planta ?? "Unassigned"), usuario, ip, ct);
         return Resultado.Bien("Driver added");
-    }
+    }, ct);
 
-    public async Task<Resultado> ActualizarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
+    public Task<Resultado> ActualizarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
     {
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-        await ContextoAsync(cn, tx, usuario, ip, ct);
-
-        string nombre; string? plantaActual; int? camionActual;
+        string nombre; string? plantaActual; long? idCamionActual; int? camionActual; string? plantaCamionActual;
         await using (var cmd = new NpgsqlCommand(@"
-            SELECT d.nombre, p.codigo, c.numero
+            SELECT d.nombre, p.codigo, d.id_camion, c.numero, pc.codigo
             FROM mezcladoras.conductor d
-            LEFT JOIN mezcladoras.planta p ON p.id_planta = d.id_planta
-            LEFT JOIN mezcladoras.camion c ON c.id_camion = d.id_camion
+            LEFT JOIN mezcladoras.planta p  ON p.id_planta  = d.id_planta
+            LEFT JOIN mezcladoras.camion c  ON c.id_camion  = d.id_camion
+            LEFT JOIN mezcladoras.planta pc ON pc.id_planta = c.id_planta
             WHERE d.id_conductor = @id FOR UPDATE OF d", cn, tx))
         {
             cmd.Parameters.AddWithValue("id", req.IdConductor);
@@ -428,41 +526,49 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
             if (!await rd.ReadAsync(ct)) return Resultado.Mal("Driver not found");
             nombre = rd.GetString(0);
             plantaActual = rd.IsDBNull(1) ? null : rd.GetString(1);
-            camionActual = rd.IsDBNull(2) ? null : rd.GetInt32(2);
+            idCamionActual = rd.IsDBNull(2) ? null : rd.GetInt64(2);
+            camionActual = rd.IsDBNull(3) ? null : rd.GetInt32(3);
+            plantaCamionActual = rd.IsDBNull(4) ? null : rd.GetString(4);
         }
 
         var camionNuevo = req.NumeroCamion;
-        var plantaNueva = Vacio(req.Planta);
+        long? idCamionNuevo = idCamionActual;
+        // Planta null en la petición = sin cambio ("Unassigned" = sin planta)
+        var plantaNueva = req.Planta is null ? plantaActual : Vacio(req.Planta);
+        var dejaCamionPorPlanta = false;
 
-        // Con camión asignado, la planta del conductor la manda el camión
-        if (camionNuevo.HasValue)
+        if (camionNuevo != camionActual)
         {
-            await using var cmd = new NpgsqlCommand(@"
-                SELECT p.codigo FROM mezcladoras.camion c
-                LEFT JOIN mezcladoras.planta p ON p.id_planta = c.id_planta
-                WHERE c.numero = @n", cn, tx);
-            cmd.Parameters.AddWithValue("n", camionNuevo.Value);
-            var r = await cmd.ExecuteScalarAsync(ct);
-            plantaNueva = r is null or DBNull ? null : (string)r;
+            if (camionNuevo.HasValue)
+            {
+                var cam = await LeerCamionAsync(cn, tx, camionNuevo.Value, ct);
+                if (cam is null) return Resultado.Mal($"Truck #{camionNuevo} does not exist");
+                if (cam.Estado != "manned") return Resultado.Mal(MensajeSoloManned(cam.Numero, cam.Estado));
+                idCamionNuevo = cam.Id;
+                plantaNueva = cam.Planta;            // hereda la planta del camión
+            }
+            else idCamionNuevo = null;
+        }
+        else if (camionActual.HasValue && plantaNueva != plantaActual && plantaNueva != plantaCamionActual)
+        {
+            // Regla 4: se va a otra planta → deja el camión (el camión sigue en la suya)
+            camionNuevo = null;
+            idCamionNuevo = null;
+            dejaCamionPorPlanta = true;
         }
 
         if (camionNuevo == camionActual && plantaNueva == plantaActual) return Resultado.Bien("No changes");
 
-        try
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE mezcladoras.conductor SET
+                id_camion = @idc,
+                id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
+            WHERE id_conductor = @id", cn, tx))
         {
-            await using var cmd = new NpgsqlCommand(@"
-                UPDATE mezcladoras.conductor SET
-                    id_camion = (SELECT id_camion FROM mezcladoras.camion WHERE numero = @num),
-                    id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
-                WHERE id_conductor = @id", cn, tx);
-            cmd.Parameters.AddWithValue("num", (object?)camionNuevo ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("idc", (object?)idCamionNuevo ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p", (object?)plantaNueva ?? DBNull.Value);
             cmd.Parameters.AddWithValue("id", req.IdConductor);
             await cmd.ExecuteNonQueryAsync(ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState == "23514")
-        {
-            return Resultado.Mal($"Truck #{camionNuevo} is Down. You must first change the truck status to Manned before assigning a driver.");
         }
 
         if (camionNuevo != camionActual)
@@ -472,67 +578,78 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         if (plantaNueva != plantaActual)
             await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Plant", plantaActual ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
 
-        await tx.CommitAsync(ct);
-        return Resultado.Bien("Changes saved");
-    }
+        var avisos = new List<string>();
+        if (idCamionActual is long anterior && anterior != idCamionNuevo
+            && await AbrirSiQuedaSinConductoresAsync(cn, tx, anterior, usuario, ip, ct) is int abierto)
+            avisos.Add($"Truck #{abierto} changed to Open Trucks (no drivers left)");
 
-    public async Task<Resultado> EliminarConductorAsync(long idConductor, string usuario, string? ip, CancellationToken ct = default)
+        string principal;
+        if (dejaCamionPorPlanta) principal = $"{nombre} moved to {plantaNueva ?? "Unassigned"} and removed from truck #{camionActual}";
+        else if (camionNuevo != camionActual && camionNuevo.HasValue) principal = $"{nombre} assigned to truck #{camionNuevo}";
+        else if (camionNuevo != camionActual) principal = $"{nombre} removed from truck #{camionActual}";
+        else principal = $"{nombre} moved to {plantaNueva ?? "Unassigned"}";
+        return Resultado.Bien(Unir(principal, avisos));
+    }, ct);
+
+    public Task<Resultado> EliminarConductorAsync(long idConductor, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
     {
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(ct);
-        await ContextoAsync(cn, tx, usuario, ip, ct);
-
-        string nombre;
-        await using (var cmd = new NpgsqlCommand("DELETE FROM mezcladoras.conductor WHERE id_conductor = @id RETURNING nombre", cn, tx))
-        {
-            cmd.Parameters.AddWithValue("id", idConductor);
-            var r = await cmd.ExecuteScalarAsync(ct);
-            if (r is null or DBNull) return Resultado.Mal("Driver not found");
-            nombre = (string)r;
-        }
-        await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Baja", nombre, null, usuario, ip, ct);
-        await tx.CommitAsync(ct);
-        return Resultado.Bien("Driver removed");
-    }
-
-    // ------------------------------------------------------------------
-    // Asignación conductor ↔ camión
-    // ------------------------------------------------------------------
-    public async Task<Resultado> AsignarConductorAsync(AsignacionRequest req, string usuario, string? ip, CancellationToken ct = default)
-    {
-        var r = await ActualizarConductorAsync(
-            new ConductorRequest { IdConductor = req.IdConductor, NumeroCamion = req.Numero }, usuario, ip, ct);
-        return r.Ok ? Resultado.Bien("Driver added and plant synchronized") : r;
-    }
-
-    public async Task<Resultado> QuitarConductorDeCamionAsync(long idConductor, string usuario, string? ip, CancellationToken ct = default)
-    {
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(ct);
-        await ContextoAsync(cn, tx, usuario, ip, ct);
-
-        string nombre; int? camionActual;
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT d.nombre, c.numero FROM mezcladoras.conductor d
-            LEFT JOIN mezcladoras.camion c ON c.id_camion = d.id_camion
-            WHERE d.id_conductor = @id", cn, tx))
+        string nombre; long? idCamion;
+        await using (var cmd = new NpgsqlCommand(
+            "DELETE FROM mezcladoras.conductor WHERE id_conductor = @id RETURNING nombre, id_camion", cn, tx))
         {
             cmd.Parameters.AddWithValue("id", idConductor);
             await using var rd = await cmd.ExecuteReaderAsync(ct);
             if (!await rd.ReadAsync(ct)) return Resultado.Mal("Driver not found");
             nombre = rd.GetString(0);
-            camionActual = rd.IsDBNull(1) ? null : rd.GetInt32(1);
+            idCamion = rd.IsDBNull(1) ? null : rd.GetInt64(1);
         }
+        await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Baja", nombre, null, usuario, ip, ct);
+
+        var avisos = new List<string>();
+        if (idCamion is long id && await AbrirSiQuedaSinConductoresAsync(cn, tx, id, usuario, ip, ct) is int abierto)
+            avisos.Add($"Truck #{abierto} changed to Open Trucks (no drivers left)");
+        return Resultado.Bien(Unir($"{nombre} removed", avisos));
+    }, ct);
+
+    // ------------------------------------------------------------------
+    // Asignación conductor ↔ camión
+    // ------------------------------------------------------------------
+    public async Task<Resultado> AsignarConductorAsync(AsignacionRequest req, string usuario, string? ip, CancellationToken ct = default)
+        // Planta = null → sin cambio; la planta la hereda del camión
+        => await ActualizarConductorAsync(
+            new ConductorRequest { IdConductor = req.IdConductor, NumeroCamion = req.Numero }, usuario, ip, ct);
+
+    public Task<Resultado> QuitarConductorDeCamionAsync(long idConductor, string usuario, string? ip, CancellationToken ct = default)
+        => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
+    {
+        string nombre; long? idCamion; int? numero;
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT d.nombre, d.id_camion, c.numero FROM mezcladoras.conductor d
+            LEFT JOIN mezcladoras.camion c ON c.id_camion = d.id_camion
+            WHERE d.id_conductor = @id FOR UPDATE OF d", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("id", idConductor);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Resultado.Mal("Driver not found");
+            nombre = rd.GetString(0);
+            idCamion = rd.IsDBNull(1) ? null : rd.GetInt64(1);
+            numero = rd.IsDBNull(2) ? null : rd.GetInt32(2);
+        }
+        if (idCamion is null) return Resultado.Bien("No changes");
 
         await using (var cmd = new NpgsqlCommand("UPDATE mezcladoras.conductor SET id_camion = NULL WHERE id_conductor = @id", cn, tx))
         {
             cmd.Parameters.AddWithValue("id", idConductor);
             await cmd.ExecuteNonQueryAsync(ct);
         }
-        await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Truck", camionActual.HasValue ? "#" + camionActual : "No truck", "No truck", usuario, ip, ct);
-        await tx.CommitAsync(ct);
-        return Resultado.Bien("Driver removed from truck");
-    }
+        await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Truck", "#" + numero, "No truck", usuario, ip, ct);
+
+        var avisos = new List<string>();
+        if (await AbrirSiQuedaSinConductoresAsync(cn, tx, idCamion.Value, usuario, ip, ct) is int abierto)
+            avisos.Add($"Truck #{abierto} changed to Open Trucks (no drivers left)");
+        return Resultado.Bien(Unir($"{nombre} removed from truck #{numero}", avisos));
+    }, ct);
 
     // ------------------------------------------------------------------
     // Informe por correo

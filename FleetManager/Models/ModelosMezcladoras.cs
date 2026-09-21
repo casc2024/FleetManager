@@ -127,6 +127,11 @@ public class CamionRequest
     public int Numero { get; set; }
     public string? Planta { get; set; }
     public string? Estado { get; set; }
+    /// <summary>
+    /// Conductor a asignar junto con el cambio a Manned (regla: un camión Manned
+    /// debe tener al menos un conductor, así que se asignan en la misma transacción).
+    /// </summary>
+    public long? IdConductor { get; set; }
     public string? Usuario { get; set; }
 }
 

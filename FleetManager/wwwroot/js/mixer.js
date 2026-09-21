@@ -19,7 +19,8 @@ const ORDEN = ["manned", "down", "open"];
 let toastTimer;
 function toast(msg, error) {
     const t = $("toast"); t.textContent = msg; t.classList.toggle("error", !!error); t.classList.add("show");
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+    // los mensajes con ajustes automáticos son más largos: se muestran más tiempo
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), Math.max(2600, String(msg).length * 60));
 }
 
 async function api(url, body) {
@@ -42,7 +43,6 @@ async function accion(url, body, recargar = true) {
         const r = await api(url, { ...body, usuario: usuario() });
         if (recargar) await cargar();
         toast(r.mensaje || "Changes saved");
-        if (r.datos) setTimeout(() => alert(r.datos), 80);   // aviso de camión Down con conductores
         return true;
     } catch (e) { toast(e.message, true); await cargar(); return false; }
 }
@@ -235,18 +235,50 @@ function renderTrucks() {
     ${pgBarra("trucks", filas.length, "trucks")}`);
 }
 
+// ------------------------------------------------------ reglas de negocio
+//  1. Solo un camión Manned puede tener conductores (Open Trucks y Down no).
+//  2. Un camión Manned debe tener al menos un conductor:
+//     · al pasar a Manned se elige el conductor (obligatorio);
+//     · si se quita su último conductor, el camión pasa a Open Trucks.
+//  3. Al pasar a Open Trucks o Down se liberan sus conductores.
+//  4. El conductor con camión está en la planta del camión; si se le cambia a
+//     otra planta, deja el camión.
+//  El servidor y la base de datos aplican las mismas reglas.
+const libres = () => data.conductores.filter(d => !d.numeroCamion);
+const camionDe = numero => data.camiones.find(c => c.numero === numero);
+const etiquetaPlanta = p => p || "Unassigned";
+
+// Aviso cuando el conductor es el único de un camión Manned
+function notaUltimoConductor(d) {
+    const c = d.numeroCamion ? camionDe(d.numeroCamion) : null;
+    return c && c.estado === "manned" && c.conductores.length === 1
+        ? `\n\n${d.nombre} is the only driver of truck #${c.numero}. A Manned truck needs at least one driver, so truck #${c.numero} will change to Open Trucks.`
+        : "";
+}
+
+function celdaConductores(c) {
+    const chips = c.conductores.map(d => `<span class="driver-chip">${esc(d.nombre)}<button title="Remove from truck" aria-label="Remove ${esc(d.nombre)} from truck" onclick="event.stopPropagation();quitarDeCamion(${d.idConductor})">×</button></span>`).join("");
+    if (c.estado === "manned") {
+        const disponibles = libres();
+        return `<div class="driver-chips">${chips}</div>
+        <div class="add-driver"><select id="add-${c.numero}" class="table-select" ${disponibles.length ? "" : "disabled"}>
+          <option value="">${disponibles.length ? "Add driver…" : "No drivers available"}</option>
+          ${disponibles.map(d => `<option value="${d.idConductor}">${esc(d.nombre)}</option>`).join("")}</select>
+          <button class="primary-btn" onclick="agregarAlCamion(${c.numero})" ${disponibles.length ? "" : "disabled"}>Add</button></div>`;
+    }
+    // Open / Down: sin lista de conductores (los chips solo aparecen si hay datos anteriores a la regla)
+    const nota = c.estado === "down" ? "Truck is Down · no drivers" : "Set status to Manned to assign a driver";
+    return `${chips ? `<div class="driver-chips">${chips}</div>` : ""}<span class="rule-note ${c.estado}">${nota}</span>`;
+}
+
 function filaCamion(c) {
-    const libres = data.conductores.filter(d => !d.numeroCamion);
     return `<tr>
       <td data-label="Truck">#${c.numero}</td>
       <td data-label="Plant"><select class="table-select" onchange="actualizarCamion(${c.numero},'planta',this.value)">
         ${["Unassigned", ...plantas()].map(p => `<option ${(c.planta || "Unassigned") === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></td>
-      <td data-label="Status"><select class="table-select" onchange="actualizarCamion(${c.numero},'estado',this.value)">
+      <td data-label="Status"><select class="table-select status-${c.estado}" onchange="cambiarEstado(${c.numero},this.value)">
         ${ORDEN.map(k => `<option value="${k}" ${c.estado === k ? "selected" : ""}>${ETIQUETA[k]}</option>`).join("")}</select></td>
-      <td data-label="Drivers"><div class="driver-chips">${c.conductores.map(d => `<span class="driver-chip">${esc(d.nombre)}<button title="Remove from truck" onclick="event.stopPropagation();quitarDeCamion(${d.idConductor})">×</button></span>`).join("") || '<span class="mini">No driver</span>'}</div>
-        <div class="add-driver"><select id="add-${c.numero}" class="table-select"><option value="">Add driver…</option>
-          ${libres.map(d => `<option value="${d.idConductor}">${esc(d.nombre)}</option>`).join("")}</select>
-          <button class="primary-btn" onclick="agregarAlCamion(${c.numero})">Add</button></div></td>
+      <td data-label="Drivers">${celdaConductores(c)}</td>
       <td data-label="Action"><button class="danger-btn" onclick="eliminarCamion(${c.numero})">Remove Truck</button></td></tr>`;
 }
 
@@ -259,7 +291,8 @@ function renderDrivers() {
     <form class="driver-form" onsubmit="agregarConductor(event)">
       <input id="newDriverName" required placeholder="Driver full name">
       <select id="newDriverPlant">${["Unassigned", ...plantas()].map(p => `<option>${esc(p)}</option>`).join("")}</select>
-      <select id="newDriverTruck"><option value="">No truck</option>${data.camiones.map(c => `<option value="${c.numero}">Truck #${c.numero}</option>`).join("")}</select>
+      <select id="newDriverTruck" onchange="sincronizarPlantaNueva()" title="Only Manned trucks can have drivers"><option value="">No truck</option>
+        ${data.camiones.filter(c => c.estado === "manned").map(c => `<option value="${c.numero}">Truck #${c.numero} · ${esc(etiquetaPlanta(c.planta))}</option>`).join("")}</select>
       <button class="primary-btn">Add Driver</button></form>
     <div class="toolbar"><input id="driverSearch" class="search" placeholder="Search driver" value="${esc(q)}" oninput="renderDrivers()"></div>
     <div class="table-wrap"><table>
@@ -269,14 +302,25 @@ function renderDrivers() {
     ${pgBarra("drivers", lista.length, "drivers")}`);
 }
 
+// Solo se ofrecen camiones Manned (regla 1). Si el conductor quedó en un camión
+// que no es Manned (datos anteriores a la regla), se muestra marcado.
+function opcionesCamionConductor(d) {
+    const actual = d.numeroCamion ? camionDe(d.numeroCamion) : null;
+    let html = '<option value="">No truck</option>';
+    if (actual && actual.estado !== "manned")
+        html += `<option value="${actual.numero}" selected>#${actual.numero} (${ETIQUETA[actual.estado]})</option>`;
+    html += data.camiones.filter(c => c.estado === "manned").map(c =>
+        `<option value="${c.numero}" ${d.numeroCamion === c.numero ? "selected" : ""}>#${c.numero} · ${esc(etiquetaPlanta(c.planta))}</option>`).join("");
+    return html;
+}
+
 function filaConductor(d) {
     return `<tr>
       <td data-label="Driver">${esc(d.nombre)}</td>
       <td data-label="Plant"><select class="table-select" onchange="actualizarConductor(${d.idConductor},'planta',this.value)">
         ${["Unassigned", ...plantas()].map(p => `<option ${(d.planta || "Unassigned") === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></td>
-      <td data-label="Truck"><select class="table-select" onchange="actualizarConductor(${d.idConductor},'camion',this.value)">
-        <option value="">No truck</option>
-        ${data.camiones.map(c => `<option value="${c.numero}" ${d.numeroCamion === c.numero ? "selected" : ""}>#${c.numero}</option>`).join("")}</select></td>
+      <td data-label="Truck"><select class="table-select" title="Only Manned trucks can have drivers" onchange="actualizarConductor(${d.idConductor},'camion',this.value)">
+        ${opcionesCamionConductor(d)}</select></td>
       <td data-label="Action"><button class="danger-btn" onclick="eliminarConductor(${d.idConductor})">Remove Driver</button></td></tr>`;
 }
 
@@ -391,10 +435,83 @@ async function cargarConfig() {
 
 // ---------------------------------------------------------------- acciones
 window.actualizarCamion = (numero, campo, valor) => {
-    const c = data.camiones.find(x => x.numero === numero);
+    const c = camionDe(numero);
+    if (campo === "estado") return cambiarEstado(numero, valor);
     const body = { numero, planta: c.planta, estado: c.estado };
     body[campo] = valor;
     accion("/api/mixer/camion/actualizar", body);
+};
+
+// Cambio de estado aplicando las reglas 2 y 3
+window.cambiarEstado = async (numero, estado) => {
+    const c = camionDe(numero);
+    if (!c || c.estado === estado) return;
+
+    if (estado === "manned" && c.conductores.length === 0) {
+        const idConductor = await elegirConductor(c);
+        if (!idConductor) { renderTrucks(); return; }          // cancelado: vuelve al estado anterior
+        return accion("/api/mixer/camion/actualizar", { numero, planta: c.planta, estado, idConductor });
+    }
+
+    if (estado !== "manned" && c.conductores.length > 0) {
+        const nombres = c.conductores.map(d => d.nombre).join(", ");
+        const tipo = estado === "down" ? "A Down truck" : "An Open truck";
+        if (!confirm(`Change truck #${numero} to ${ETIQUETA[estado]}?\n\n${tipo} cannot have drivers, so ${nombres} will be released from it.`)) {
+            renderTrucks(); return;
+        }
+    }
+    accion("/api/mixer/camion/actualizar", { numero, planta: c.planta, estado });
+};
+
+// Diálogo para elegir el conductor obligatorio al pasar a Manned
+function elegirConductor(c) {
+    return new Promise(resolve => {
+        let dlg = $("driverDialog");
+        if (!dlg) { dlg = document.createElement("dialog"); dlg.id = "driverDialog"; dlg.className = "modal"; document.body.appendChild(dlg); }
+        const lista = libres();
+        const mismaPlanta = c.planta ? lista.filter(d => d.planta === c.planta) : [];
+        const otros = lista.filter(d => !mismaPlanta.includes(d));
+        const opt = d => `<option value="${d.idConductor}">${esc(d.nombre)}${d.planta ? " · " + esc(d.planta) : ""}</option>`;
+
+        dlg.innerHTML = `<form class="modal-body">
+          <h3>Set truck #${c.numero} to Manned</h3>
+          <p>A Manned truck must have at least one driver. Choose the driver for truck #${c.numero}${c.planta ? ` at <b>${esc(c.planta)}</b>` : ""}.</p>
+          ${lista.length ? `
+            <label for="dlgDriver">Driver</label>
+            <select id="dlgDriver">
+              <option value="">Select a driver…</option>
+              ${mismaPlanta.length ? `<optgroup label="At ${esc(c.planta)}">${mismaPlanta.map(opt).join("")}</optgroup>` : ""}
+              ${otros.length ? `<optgroup label="${mismaPlanta.length ? "Other available drivers" : "Available drivers"}">${otros.map(opt).join("")}</optgroup>` : ""}
+            </select>
+            <small class="modal-hint">Only drivers without a truck are listed. The driver moves to the truck's plant.</small>
+            <small class="modal-error" id="dlgError"></small>`
+            : `<div class="aviso warn">There are no available drivers. Add a driver in the Drivers tab, or release one from another truck first.</div>`}
+          <div class="modal-actions">
+            <button type="button" class="ghost-btn" id="dlgCancel">Cancel</button>
+            ${lista.length ? '<button type="submit" class="primary-btn">Set Manned</button>' : ""}
+          </div></form>`;
+
+        let resuelto = false;
+        const cerrar = v => { if (resuelto) return; resuelto = true; dlg.close(); resolve(v); };
+        $("dlgCancel").onclick = () => cerrar(null);
+        dlg.oncancel = e => { e.preventDefault(); cerrar(null); };          // tecla Esc
+        dlg.querySelector("form").onsubmit = e => {
+            e.preventDefault();
+            const v = +($("dlgDriver")?.value || 0);
+            if (!v) { $("dlgError").textContent = "Select a driver to continue."; $("dlgDriver").focus(); return; }
+            cerrar(v);
+        };
+        dlg.showModal();
+        ($("dlgDriver") || $("dlgCancel")).focus();
+    });
+}
+
+window.sincronizarPlantaNueva = () => {
+    // Con camión elegido, el conductor queda en la planta del camión
+    const num = +$("newDriverTruck").value, sel = $("newDriverPlant");
+    const c = num ? camionDe(num) : null;
+    if (c) sel.value = etiquetaPlanta(c.planta);
+    sel.disabled = !!c;
 };
 
 window.agregarCamion = e => {
@@ -412,18 +529,42 @@ window.eliminarCamion = numero => {
 };
 
 window.agregarAlCamion = numero => {
+    const c = camionDe(numero);
+    if (c && c.estado !== "manned") return toast(`Truck #${numero} must be Manned to assign drivers`, true);
     const id = +$("add-" + numero).value;
     if (!id) return toast("Select a driver", true);
     accion("/api/mixer/conductor/asignar", { numero, idConductor: id });
 };
 
-window.quitarDeCamion = idConductor => accion("/api/mixer/conductor/quitar", { idConductor });
+window.quitarDeCamion = idConductor => {
+    const d = data.conductores.find(x => x.idConductor === idConductor);
+    const nota = d ? notaUltimoConductor(d) : "";
+    if (nota && !confirm(`Remove ${d.nombre} from truck #${d.numeroCamion}?${nota}`)) return;
+    accion("/api/mixer/conductor/quitar", { idConductor });
+};
 
 window.actualizarConductor = (idConductor, campo, valor) => {
     const d = data.conductores.find(x => x.idConductor === idConductor);
-    const body = { idConductor, planta: d.planta, numeroCamion: d.numeroCamion };
-    if (campo === "planta") body.planta = valor;
-    else body.numeroCamion = valor ? +valor : null;
+    const body = { idConductor, planta: etiquetaPlanta(d.planta), numeroCamion: d.numeroCamion };
+    let aviso = "";
+
+    if (campo === "planta") {
+        body.planta = valor;
+        const c = d.numeroCamion ? camionDe(d.numeroCamion) : null;
+        // Regla 4: a otra planta distinta a la de su camión → deja el camión
+        if (c && etiquetaPlanta(c.planta) !== valor)
+            aviso = `Move ${d.nombre} to ${valor}?\n\nTruck #${c.numero} is at ${etiquetaPlanta(c.planta)}, so ${d.nombre} will be removed from it.${notaUltimoConductor(d)}`;
+    } else {
+        body.numeroCamion = valor ? +valor : null;
+        if (d.numeroCamion && body.numeroCamion !== d.numeroCamion) {
+            const nota = notaUltimoConductor(d);
+            if (nota) aviso = (body.numeroCamion
+                ? `Move ${d.nombre} from truck #${d.numeroCamion} to truck #${body.numeroCamion}?`
+                : `Remove ${d.nombre} from truck #${d.numeroCamion}?`) + nota;
+        }
+    }
+
+    if (aviso && !confirm(aviso)) { renderDrivers(); return; }      // cancelado: vuelve al valor anterior
     accion("/api/mixer/conductor/actualizar", body);
 };
 
@@ -437,7 +578,7 @@ window.agregarConductor = e => {
 
 window.eliminarConductor = idConductor => {
     const d = data.conductores.find(x => x.idConductor === idConductor);
-    if (!confirm(`Remove ${d ? d.nombre : "this driver"} from the list?`)) return;
+    if (!confirm(`Remove ${d ? d.nombre : "this driver"} from the list?${d ? notaUltimoConductor(d) : ""}`)) return;
     accion("/api/mixer/conductor/eliminar", { idConductor });
 };
 

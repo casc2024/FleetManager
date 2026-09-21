@@ -59,15 +59,23 @@ Réplica del tablero *Daily Fleet Status* con la data en PostgreSQL:
 - **Drivers**: alta/baja de conductores, asignación de planta y camión.
 - **Email report**: envío del Overview por correo, manual o programado.
 
-Reglas de negocio (iguales a la página original, validadas también en la base):
+Reglas de negocio (se aplican en la pantalla, en el servidor y en la base de datos):
+
+| # | Regla | Cómo se aplica |
+|---|---|---|
+| 1 | Solo un camión **Manned** puede tener conductores. **Open Trucks** y **Down** no. | En Open/Down no aparece la lista de conductores; en *Drivers* el desplegable de camiones solo ofrece Manned. |
+| 2 | Un camión **Manned** debe tener al menos un conductor. | Al elegir Manned se abre un diálogo para escoger el conductor (obligatorio) y ambos se guardan en la misma transacción. Si se quita el último conductor, el camión pasa a Open Trucks (con confirmación). |
+| 3 | Al pasar un camión a Open Trucks o Down se liberan sus conductores. | Se pide confirmación mostrando quiénes quedan sin camión. |
+| 4 | El conductor con camión está en la planta del camión. | Al cambiar la planta del camión, sus conductores se mueven con él. Si al conductor se le cambia a otra planta, deja el camión (con confirmación). |
 
 - Un camión puede tener varios conductores; un conductor tiene a lo más un camión.
-- No se puede asignar un conductor a un camión en estado **Down** (trigger `fn_valida_conductor_camion`).
-- Al asignar un conductor a un camión, hereda la planta del camión; al cambiar la planta del camión,
-  sus conductores se mueven con él.
-- Al poner un camión en Down con conductores asignados, la app avisa para reasignarlos.
+- En la base: el trigger `fn_valida_conductor_camion` impide asignar conductores a camiones que no
+  son Manned, y los *constraint triggers* diferidos `trg_regla_camion_conductores` /
+  `trg_regla_conductor_camion` verifican al confirmar cada transacción que Manned ⇔ con conductor.
 
 ### Preparar la base (una vez)
+
+Base nueva:
 
 ```cmd
 psql "postgresql://usuario:clave@host:puerto/bd" -f db/mezcladoras_esquema.sql
@@ -75,6 +83,17 @@ psql "postgresql://usuario:clave@host:puerto/bd" -f db/mezcladoras_esquema.sql
 
 Crea el esquema `mezcladoras` con auditoría, vistas, las reglas y la carga inicial
 (7 plantas, 95 camiones, 53 conductores). Es idempotente y la app nunca lo ejecuta.
+
+Base que ya tenía datos (antes de las reglas 1–4), ejecutar **una vez**:
+
+```cmd
+psql "postgresql://usuario:clave@host:puerto/bd" -f db/mezcladoras_reglas_negocio.sql
+```
+
+Ordena los datos que no cumplen las reglas y luego las activa, en una sola transacción:
+Down con conductores → se liberan; Open con conductores → pasa a Manned; Manned sin conductores →
+pasa a Open Trucks. Cada ajuste queda en el historial con el usuario `reglas-v2`. El encabezado del
+script trae una consulta para ver antes qué se va a ajustar.
 
 ### Envío del informe por correo
 
