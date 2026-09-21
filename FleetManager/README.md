@@ -63,10 +63,11 @@ Reglas de negocio (se aplican en la pantalla, en el servidor y en la base de dat
 
 | # | Regla | Cómo se aplica |
 |---|---|---|
-| 1 | Solo un camión **Manned** puede tener conductores. **Open Trucks** y **Down** no. | En Open/Down no aparece la lista de conductores; en *Drivers* el desplegable de camiones solo ofrece Manned. |
+| 1 | Solo un camión **Manned** puede tener conductores. **Open Trucks** y **Down** no. | En *Mixer trucks*, Open/Down no muestran la lista de conductores. En *Drivers* (y en el alta) se puede elegir un camión **Open**: al asignarle el conductor pasa automáticamente a **Manned**. Los **Down** aparecen deshabilitados. |
 | 2 | Un camión **Manned** debe tener al menos un conductor. | Al elegir Manned se abre un diálogo para escoger el conductor (obligatorio) y ambos se guardan en la misma transacción. Si se quita el último conductor, el camión pasa a Open Trucks (con confirmación). |
 | 3 | Al pasar un camión a Open Trucks o Down se liberan sus conductores. | Se pide confirmación mostrando quiénes quedan sin camión. |
 | 4 | El conductor con camión está en la planta del camión. | Al cambiar la planta del camión, sus conductores se mueven con él. Si al conductor se le cambia a otra planta, deja el camión (con confirmación). |
+| 5 | **Máximo 2 conductores** por camión. | Con 2 conductores la fila de *Mixer trucks* ya no muestra "Add driver"; en *Drivers* el camión aparece como *Full (2/2)* deshabilitado. El servidor y la base también lo validan. |
 
 - Un camión puede tener varios conductores; un conductor tiene a lo más un camión.
 - En la base: el trigger `fn_valida_conductor_camion` impide asignar conductores a camiones que no
@@ -94,6 +95,15 @@ Ordena los datos que no cumplen las reglas y luego las activa, en una sola trans
 Down con conductores → se liberan; Open con conductores → pasa a Manned; Manned sin conductores →
 pasa a Open Trucks. Cada ajuste queda en el historial con el usuario `reglas-v2`. El encabezado del
 script trae una consulta para ver antes qué se va a ajustar.
+
+Regla de máximo 2 conductores (después del anterior), ejecutar **una vez**:
+
+```cmd
+psql "postgresql://usuario:clave@host:puerto/bd" -f db/mezcladoras_regla_max_conductores.sql
+```
+
+Si algún camión tiene más de 2, conserva los 2 asignados hace más tiempo y deja sin camión al resto
+(historial con el usuario `regla-max-2`).
 
 ### Envío del informe por correo
 

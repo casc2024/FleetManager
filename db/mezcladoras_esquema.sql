@@ -10,6 +10,7 @@
 --      un camión.
 --    · Solo un camión Manned puede tener conductores (Open Trucks y Down no).
 --    · Un camión Manned debe tener al menos un conductor.
+--    · Máximo 2 conductores por camión.
 --    · Al asignar un conductor a un camión, el conductor hereda la planta
 --      del camión (lo hace la aplicación y queda en el historial).
 --  Si la base ya existía con datos, ejecute además UNA vez
@@ -139,7 +140,8 @@ CREATE INDEX IF NOT EXISTS ix_conductor_planta ON conductor (id_planta);
 --   1. Solo un camión Manned puede tener conductores
 --      (Open Trucks y Down no llevan conductores).
 --   2. Un camión Manned debe tener al menos un conductor.
--- La regla 1 se valida al instante (trigger BEFORE). La regla 2 se valida al
+--   3. Máximo 2 conductores por camión.
+-- Las reglas 1 y 3 se validan al instante (trigger BEFORE). La regla 2 se valida al
 -- final de la transacción (constraint trigger DEFERRED), así la aplicación
 -- puede pasar un camión a Manned y asignarle su conductor en la misma
 -- transacción. Los mensajes van en inglés porque los muestra la aplicación.
@@ -158,6 +160,12 @@ BEGIN
          WHERE c.id_camion = NEW.id_camion;
         IF v_estado IS DISTINCT FROM 'manned' THEN
             RAISE EXCEPTION 'Truck #% is %. Drivers can only be assigned to Manned trucks.', v_numero, v_nombre
+                USING ERRCODE = 'check_violation';
+        END IF;
+        -- Regla 3: máximo 2 conductores por camión
+        IF (SELECT count(*) FROM mezcladoras.conductor
+             WHERE id_camion = NEW.id_camion AND activo AND id_conductor <> NEW.id_conductor) >= 2 THEN
+            RAISE EXCEPTION 'Truck #% already has 2 drivers (maximum). Remove one before assigning another.', v_numero
                 USING ERRCODE = 'check_violation';
         END IF;
     END IF;
@@ -181,6 +189,9 @@ BEGIN
 
     IF v_estado = 'manned' AND v_cantidad = 0 THEN
         RAISE EXCEPTION 'Truck #% is Manned and must have at least one driver.', v_numero
+            USING ERRCODE = 'check_violation';
+    ELSIF v_cantidad > 2 THEN
+        RAISE EXCEPTION 'Truck #% has % drivers; the maximum is 2.', v_numero, v_cantidad
             USING ERRCODE = 'check_violation';
     ELSIF v_estado <> 'manned' AND v_cantidad > 0 THEN
         RAISE EXCEPTION 'Truck #% is % and cannot have drivers assigned.', v_numero, v_nombre

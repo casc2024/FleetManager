@@ -121,6 +121,7 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
 .rule-note:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
 .rule-note.down{color:#b33434;background:#fff0f0}
 .rule-note.open{color:#8a5210;background:#fff6e8}
+.rule-note.full{color:#244377;background:var(--sky)}
 
 /* Diálogo: conductor obligatorio al pasar a Manned */
 .modal{border:0;border-radius:16px;padding:0;width:min(440px,calc(100vw - 32px));box-shadow:0 24px 60px #0f1c3a40;color:var(--ink)}

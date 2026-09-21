@@ -319,9 +319,48 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         return numero;
     }
 
+    /// <summary>Regla 5: máximo de conductores por camión.</summary>
+    public const int MaxConductoresPorCamion = 2;
+
+    private static string MensajeCamionLleno(int numero) =>
+        $"Truck #{numero} already has {MaxConductoresPorCamion} drivers (maximum). Remove one before assigning another.";
+
+    private static async Task<int> ContarConductoresAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long idCamion, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            "SELECT count(*) FROM mezcladoras.conductor WHERE id_camion = @id AND activo", cn, tx);
+        cmd.Parameters.AddWithValue("id", idCamion);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+    }
+
     private static string MensajeSoloManned(int numero, string estado) => estado == "down"
         ? $"Truck #{numero} is Down. Drivers can only be assigned to Manned trucks."
         : $"Truck #{numero} is Open. Set it to Manned in Mixer trucks (you'll choose the driver there) before assigning drivers.";
+
+    /// <summary>Regla 1b: un camión Open Trucks que recibe un conductor pasa
+    /// automáticamente a Manned. Un camión Down no puede recibir conductores.
+    /// Se llama ANTES de asignar el conductor (el trigger exige Manned).
+    /// Devuelve el aviso a mostrar, o null si no hubo cambio.</summary>
+    private static async Task<(bool ok, string? aviso)> PrepararCamionParaConductorAsync(NpgsqlConnection cn, NpgsqlTransaction tx,
+        CamionInfo cam, string usuario, string? ip, CancellationToken ct)
+    {
+        if (cam.Estado == "down") return (false, MensajeSoloManned(cam.Numero, cam.Estado));
+        // Regla 5: máximo de conductores por camión
+        if (await ContarConductoresAsync(cn, tx, cam.Id, ct) >= MaxConductoresPorCamion)
+            return (false, MensajeCamionLleno(cam.Numero));
+        if (cam.Estado == "manned") return (true, null);
+
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE mezcladoras.camion
+               SET id_estado = (SELECT id_estado FROM mezcladoras.estado_camion WHERE codigo = 'manned')
+             WHERE id_camion = @id", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("id", cam.Id);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await HistorialAsync(cn, tx, "CAMION", "#" + cam.Numero, "Status", cam.Estado, "manned", usuario, ip, ct);
+        return (true, $"Truck #{cam.Numero} changed to Manned");
+    }
 
     private static string Nombres(IEnumerable<ConductorInfo> lista) => string.Join(", ", lista.Select(x => x.Nombre));
 
@@ -420,6 +459,7 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
 
             if (idCamAnt != cam.Id)
             {
+                if (conductores.Count >= MaxConductoresPorCamion) return Resultado.Mal(MensajeCamionLleno(cam.Numero));
                 await using (var cmd = new NpgsqlCommand(@"
                     UPDATE mezcladoras.conductor
                        SET id_camion = @c, id_planta = (SELECT id_planta FROM mezcladoras.planta WHERE codigo = @p)
@@ -482,14 +522,17 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
             if (await cmd.ExecuteScalarAsync(ct) != null) return Resultado.Mal("This driver is already on the list");
         }
 
-        // Con camión: debe ser Manned y el conductor hereda su planta
+        // Con camión: Manned u Open (el Open pasa a Manned); el conductor hereda su planta
         long? idCamion = null;
         var planta = Vacio(req.Planta);
+        string? avisoCamion = null;
         if (req.NumeroCamion.HasValue)
         {
             var cam = await LeerCamionAsync(cn, tx, req.NumeroCamion.Value, ct);
             if (cam is null) return Resultado.Mal($"Truck #{req.NumeroCamion} does not exist");
-            if (cam.Estado != "manned") return Resultado.Mal(MensajeSoloManned(cam.Numero, cam.Estado));
+            var (listo, aviso) = await PrepararCamionParaConductorAsync(cn, tx, cam, usuario, ip, ct);
+            if (!listo) return Resultado.Mal(aviso!);
+            avisoCamion = aviso;
             idCamion = cam.Id;
             planta = cam.Planta;
         }
@@ -506,7 +549,7 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
 
         await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Alta", null,
             req.NumeroCamion.HasValue ? "#" + req.NumeroCamion : (planta ?? "Unassigned"), usuario, ip, ct);
-        return Resultado.Bien("Driver added");
+        return Resultado.Bien(Unir("Driver added", avisoCamion is null ? new() : new() { avisoCamion }));
     }, ct);
 
     public Task<Resultado> ActualizarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
@@ -536,6 +579,7 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         // Planta null en la petición = sin cambio ("Unassigned" = sin planta)
         var plantaNueva = req.Planta is null ? plantaActual : Vacio(req.Planta);
         var dejaCamionPorPlanta = false;
+        var avisos = new List<string>();
 
         if (camionNuevo != camionActual)
         {
@@ -543,7 +587,9 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
             {
                 var cam = await LeerCamionAsync(cn, tx, camionNuevo.Value, ct);
                 if (cam is null) return Resultado.Mal($"Truck #{camionNuevo} does not exist");
-                if (cam.Estado != "manned") return Resultado.Mal(MensajeSoloManned(cam.Numero, cam.Estado));
+                var (listo, aviso) = await PrepararCamionParaConductorAsync(cn, tx, cam, usuario, ip, ct);
+                if (!listo) return Resultado.Mal(aviso!);
+                if (aviso != null) avisos.Add(aviso);
                 idCamionNuevo = cam.Id;
                 plantaNueva = cam.Planta;            // hereda la planta del camión
             }
@@ -578,7 +624,6 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         if (plantaNueva != plantaActual)
             await HistorialAsync(cn, tx, "CONDUCTOR", nombre, "Plant", plantaActual ?? "Unassigned", plantaNueva ?? "Unassigned", usuario, ip, ct);
 
-        var avisos = new List<string>();
         if (idCamionActual is long anterior && anterior != idCamionNuevo
             && await AbrirSiQuedaSinConductoresAsync(cn, tx, anterior, usuario, ip, ct) is int abierto)
             avisos.Add($"Truck #{abierto} changed to Open Trucks (no drivers left)");

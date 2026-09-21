@@ -244,6 +244,9 @@ function renderTrucks() {
 //  4. El conductor con camión está en la planta del camión; si se le cambia a
 //     otra planta, deja el camión.
 //  El servidor y la base de datos aplican las mismas reglas.
+//  5. Máximo 2 conductores por camión.
+const MAX_CONDUCTORES = 2;
+const lleno = c => c.conductores.length >= MAX_CONDUCTORES;
 const libres = () => data.conductores.filter(d => !d.numeroCamion);
 const camionDe = numero => data.camiones.find(c => c.numero === numero);
 const etiquetaPlanta = p => p || "Unassigned";
@@ -258,6 +261,8 @@ function notaUltimoConductor(d) {
 
 function celdaConductores(c) {
     const chips = c.conductores.map(d => `<span class="driver-chip">${esc(d.nombre)}<button title="Remove from truck" aria-label="Remove ${esc(d.nombre)} from truck" onclick="event.stopPropagation();quitarDeCamion(${d.idConductor})">×</button></span>`).join("");
+    if (c.estado === "manned" && lleno(c))
+        return `<div class="driver-chips">${chips}</div><span class="rule-note full">Maximum ${MAX_CONDUCTORES} drivers per truck</span>`;
     if (c.estado === "manned") {
         const disponibles = libres();
         return `<div class="driver-chips">${chips}</div>
@@ -287,12 +292,12 @@ function renderDrivers() {
     const lista = data.conductores.filter(d => d.nombre.toLocaleLowerCase().includes(q));
     pgFirma("drivers", q);
     const listaPag = pgPagina("drivers", lista);
-    pintar("drivers", `<div class="section-head"><div><h2>Drivers</h2><p>${data.conductores.length} unique names. Assign a plant and truck.</p></div></div>
+    pintar("drivers", `<div class="section-head"><div><h2>Drivers</h2><p>${data.conductores.length} unique names. Assign a plant and truck. Assigning a driver to an <b>Open</b> truck changes it to <b>Manned</b>; <b>Down</b> trucks cannot take drivers. Maximum <b>${MAX_CONDUCTORES}</b> drivers per truck.</p></div></div>
     <form class="driver-form" onsubmit="agregarConductor(event)">
       <input id="newDriverName" required placeholder="Driver full name">
-      <select id="newDriverPlant">${["Unassigned", ...plantas()].map(p => `<option>${esc(p)}</option>`).join("")}</select>
-      <select id="newDriverTruck" onchange="sincronizarPlantaNueva()" title="Only Manned trucks can have drivers"><option value="">No truck</option>
-        ${data.camiones.filter(c => c.estado === "manned").map(c => `<option value="${c.numero}">Truck #${c.numero} · ${esc(etiquetaPlanta(c.planta))}</option>`).join("")}</select>
+      <select id="newDriverPlant" onchange="sincronizarCamionNuevo()">${["Unassigned", ...plantas()].map(p => `<option>${esc(p)}</option>`).join("")}</select>
+      <select id="newDriverTruck" onchange="sincronizarPlantaNueva()" title="Open trucks change to Manned when a driver is assigned. Down trucks cannot take drivers.">
+        ${opcionesCamiones(null, "No truck")}</select>
       <button class="primary-btn">Add Driver</button></form>
     <div class="toolbar"><input id="driverSearch" class="search" placeholder="Search driver" value="${esc(q)}" oninput="renderDrivers()"></div>
     <div class="table-wrap"><table>
@@ -302,15 +307,22 @@ function renderDrivers() {
     ${pgBarra("drivers", lista.length, "drivers")}`);
 }
 
-// Solo se ofrecen camiones Manned (regla 1). Si el conductor quedó en un camión
-// que no es Manned (datos anteriores a la regla), se muestra marcado.
-function opcionesCamionConductor(d) {
-    const actual = d.numeroCamion ? camionDe(d.numeroCamion) : null;
-    let html = '<option value="">No truck</option>';
-    if (actual && actual.estado !== "manned")
-        html += `<option value="${actual.numero}" selected>#${actual.numero} (${ETIQUETA[actual.estado]})</option>`;
-    html += data.camiones.filter(c => c.estado === "manned").map(c =>
-        `<option value="${c.numero}" ${d.numeroCamion === c.numero ? "selected" : ""}>#${c.numero} · ${esc(etiquetaPlanta(c.planta))}</option>`).join("");
+// Lista de camiones para un conductor: la MISMA en web y celular.
+//  · Manned: se asigna directo.
+//  · Open Trucks: se puede elegir; al asignar el conductor pasa a Manned.
+//  · Down: visible pero deshabilitado (un camión Down no lleva conductores).
+function opcionesCamiones(seleccionado, textoVacio = "No truck") {
+    const grupo = estado => data.camiones.filter(c => c.estado === estado);
+    const etiqueta = c => `#${c.numero} · ${esc(etiquetaPlanta(c.planta))}`;
+    const opcion = (c, extra = "", bloqueado = false) => {
+        if (seleccionado !== c.numero && lleno(c)) { bloqueado = true; extra = ` — Full (${MAX_CONDUCTORES}/${MAX_CONDUCTORES})`; }
+        return `<option value="${c.numero}" ${seleccionado === c.numero ? "selected" : (bloqueado ? "disabled" : "")}>${etiqueta(c)}${extra}</option>`;
+    };
+    const manned = grupo("manned"), abiertos = grupo("open"), down = grupo("down");
+    let html = `<option value="">${textoVacio}</option>`;
+    if (manned.length) html += `<optgroup label="Manned (${manned.length})">${manned.map(c => opcion(c)).join("")}</optgroup>`;
+    if (abiertos.length) html += `<optgroup label="Open Trucks — become Manned when assigned (${abiertos.length})">${abiertos.map(c => opcion(c)).join("")}</optgroup>`;
+    if (down.length) html += `<optgroup label="Down — not available (${down.length})">${down.map(c => opcion(c, " — Down", true)).join("")}</optgroup>`;
     return html;
 }
 
@@ -319,8 +331,8 @@ function filaConductor(d) {
       <td data-label="Driver">${esc(d.nombre)}</td>
       <td data-label="Plant"><select class="table-select" onchange="actualizarConductor(${d.idConductor},'planta',this.value)">
         ${["Unassigned", ...plantas()].map(p => `<option ${(d.planta || "Unassigned") === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></td>
-      <td data-label="Truck"><select class="table-select" title="Only Manned trucks can have drivers" onchange="actualizarConductor(${d.idConductor},'camion',this.value)">
-        ${opcionesCamionConductor(d)}</select></td>
+      <td data-label="Truck"><select class="table-select" title="Open trucks change to Manned when a driver is assigned. Down trucks cannot take drivers." onchange="actualizarConductor(${d.idConductor},'camion',this.value)">
+        ${opcionesCamiones(d.numeroCamion)}</select></td>
       <td data-label="Action"><button class="danger-btn" onclick="eliminarConductor(${d.idConductor})">Remove Driver</button></td></tr>`;
 }
 
@@ -506,12 +518,21 @@ function elegirConductor(c) {
     });
 }
 
+// Formulario de alta: Plant siempre habilitado.
+//  · Al elegir camión, Plant toma la planta del camión.
+//  · Si luego se elige otra planta distinta, se quita el camión.
 window.sincronizarPlantaNueva = () => {
-    // Con camión elegido, el conductor queda en la planta del camión
-    const num = +$("newDriverTruck").value, sel = $("newDriverPlant");
+    const num = +$("newDriverTruck").value;
     const c = num ? camionDe(num) : null;
-    if (c) sel.value = etiquetaPlanta(c.planta);
-    sel.disabled = !!c;
+    if (c) $("newDriverPlant").value = etiquetaPlanta(c.planta);
+};
+window.sincronizarCamionNuevo = () => {
+    const num = +$("newDriverTruck").value;
+    const c = num ? camionDe(num) : null;
+    if (c && etiquetaPlanta(c.planta) !== $("newDriverPlant").value) {
+        $("newDriverTruck").value = "";
+        toast(`Truck #${c.numero} is at ${etiquetaPlanta(c.planta)}: truck cleared`);
+    }
 };
 
 window.agregarCamion = e => {
@@ -531,6 +552,7 @@ window.eliminarCamion = numero => {
 window.agregarAlCamion = numero => {
     const c = camionDe(numero);
     if (c && c.estado !== "manned") return toast(`Truck #${numero} must be Manned to assign drivers`, true);
+    if (c && lleno(c)) return toast(`Truck #${numero} already has ${MAX_CONDUCTORES} drivers (maximum)`, true);
     const id = +$("add-" + numero).value;
     if (!id) return toast("Select a driver", true);
     accion("/api/mixer/conductor/asignar", { numero, idConductor: id });
