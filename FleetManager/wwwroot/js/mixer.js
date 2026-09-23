@@ -328,6 +328,7 @@ function renderDrivers() {
     pgFirma("drivers", q);
     const listaPag = pgPagina("drivers", lista);
     pintar("drivers", `<div class="section-head"><div><h2>Drivers</h2><p>${data.conductores.length} unique names. Assign a plant and truck. Assigning a driver to an <b>Open</b> truck changes it to <b>Manned</b>; <b>Down</b> trucks cannot take drivers. Maximum <b>${MAX_CONDUCTORES}</b> drivers per truck. New drivers are saved as <b>Last Name, First Name</b>.</p></div></div>
+    <div class="toolbar"><input id="driverSearch" class="search" placeholder="Search driver" value="${esc(q)}" oninput="renderDrivers()"></div>
     <form class="driver-form" onsubmit="agregarConductor(event)">
       <input id="newDriverLast" required maxlength="70" autocomplete="off"
         placeholder="Last Name" title="Letters only" oninput="filtrarLetras(this)">
@@ -337,7 +338,6 @@ function renderDrivers() {
       <select id="newDriverTruck" onchange="sincronizarPlantaNueva()" title="Open trucks change to Manned when a driver is assigned. Down trucks cannot take drivers.">
         ${opcionesCamiones(null, "No truck")}</select>
       <button class="primary-btn">Add Driver</button></form>
-    <div class="toolbar"><input id="driverSearch" class="search" placeholder="Search driver" value="${esc(q)}" oninput="renderDrivers()"></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Driver</th><th>Assigned Plant</th><th>Truck</th><th>Action</th></tr></thead>
       <tbody>${listaPag.map(filaConductor).join("") || '<tr><td colspan="4" class="empty-note">No drivers found.</td></tr>'}</tbody>
