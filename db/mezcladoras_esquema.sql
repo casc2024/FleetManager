@@ -377,7 +377,8 @@ SELECT  (SELECT count(*) FROM camion WHERE activo)                              
 -- ---------------------------------------------------------------------
 INSERT INTO planta (codigo, nombre, orden) VALUES
     ('Anna','Anna',1), ('Farmersville','Farmersville',2), ('Lewisville','Lewisville',3),
-    ('Prosper','Prosper',4), ('Gunter','Gunter',5), ('Northlake','Northlake',6), ('Aubrey','Aubrey',7)
+    ('Prosper','Prosper',4), ('Gunter','Gunter',5), ('Northlake','Northlake',6), ('Aubrey','Aubrey',7),
+    ('Haslet','Haslet',8)
 ON CONFLICT (codigo) DO NOTHING;
 
 INSERT INTO estado_camion (codigo, nombre, color_hex, orden) VALUES

@@ -217,17 +217,19 @@ function renderTrucks() {
     const filasPag = pgPagina("trucks", filas);
 
     pintar("trucks", `<div class="section-head"><div><h2>${etiqueta}</h2><p>${filas.length} units · Plant and assigned driver details.</p></div></div>
-    <form class="truck-form" onsubmit="agregarCamion(event)">
-      <input id="newTruckNumber" required inputmode="numeric" placeholder="New truck number">
-      <button class="primary-btn">+ Add Truck</button></form>
     <div class="toolbar">
-      <input id="truckSearch" class="search" placeholder="Search truck #" value="${esc(q)}" oninput="renderTrucks()">
+      <input id="truckSearch" class="search" placeholder="Search truck #" value="${esc(q)}" inputmode="numeric" autocomplete="off"
+             oninput="soloNumeros(this);renderTrucks()">
       <select id="plantFilter" class="filter" onchange="renderTrucks()">
         <option>All</option>${["Unassigned", ...plantas()].map(p => `<option ${pf === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
       <select class="filter" onchange="setFiltroEstado(this.value)">
         <option value="all" ${filtroEstado === "all" ? "selected" : ""}>All Statuses</option>
         ${ORDEN.map(k => `<option value="${k}" ${filtroEstado === k ? "selected" : ""}>${ETIQUETA[k]}</option>`).join("")}</select>
     </div>
+    <form class="truck-form" onsubmit="agregarCamion(event)">
+      <input id="newTruckNumber" required inputmode="numeric" autocomplete="off" maxlength="6"
+             placeholder="New truck number (digits only)" oninput="soloNumeros(this)">
+      <button class="primary-btn">+ Add Truck</button></form>
     <div class="table-wrap"><table>
       <thead><tr><th>Truck</th><th>Plant</th><th>Status</th><th>Truck Drivers</th><th>Action</th></tr></thead>
       <tbody>${filasPag.map(filaCamion).join("") || '<tr><td colspan="5" class="empty-note">No trucks have this status.</td></tr>'}</tbody>
@@ -248,6 +250,39 @@ function renderTrucks() {
 const MAX_CONDUCTORES = 2;
 const lleno = c => c.conductores.length >= MAX_CONDUCTORES;
 const libres = () => data.conductores.filter(d => !d.numeroCamion);
+
+// ------------------------------------------------------- validación de datos
+// Número de camión: solo dígitos (en el alta y en la búsqueda).
+window.soloNumeros = el => {
+    const limpio = el.value.replace(/\D+/g, "");
+    if (limpio !== el.value) {
+        const pos = el.selectionStart - (el.value.length - limpio.length);
+        el.value = limpio;
+        try { el.setSelectionRange(pos, pos); } catch { }
+    }
+};
+// Nombre del conductor: letras (con tildes y ñ), números, espacios, comas,
+// puntos, guiones y apóstrofes (p. ej. "Charles Jr., Gary" u "O'Brien").
+const NOMBRE_VALIDO = /^[\p{L}\p{N} ,.'\-]+$/u;
+window.filtrarNombre = el => {
+    const limpio = el.value.replace(/[^\p{L}\p{N} ,.'\-]+/gu, "");
+    if (limpio !== el.value) {
+        const pos = el.selectionStart - (el.value.length - limpio.length);
+        el.value = limpio;
+        try { el.setSelectionRange(pos, pos); } catch { }
+    }
+};
+// First Name / Last Name: solo letras (con tildes y ñ), espacios, guiones y apóstrofes.
+const SOLO_LETRAS = /^\p{L}[\p{L} '\-.]*$/u;
+window.filtrarLetras = el => {
+    const limpio = el.value.replace(/[^\p{L} '\-.]+/gu, "").replace(/^[ '\-.]+/, "");
+    if (limpio !== el.value) {
+        const pos = el.selectionStart - (el.value.length - limpio.length);
+        el.value = limpio;
+        try { el.setSelectionRange(pos, pos); } catch { }
+    }
+};
+const mismoNombre = (a, b) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 const camionDe = numero => data.camiones.find(c => c.numero === numero);
 const etiquetaPlanta = p => p || "Unassigned";
 
@@ -292,9 +327,12 @@ function renderDrivers() {
     const lista = data.conductores.filter(d => d.nombre.toLocaleLowerCase().includes(q));
     pgFirma("drivers", q);
     const listaPag = pgPagina("drivers", lista);
-    pintar("drivers", `<div class="section-head"><div><h2>Drivers</h2><p>${data.conductores.length} unique names. Assign a plant and truck. Assigning a driver to an <b>Open</b> truck changes it to <b>Manned</b>; <b>Down</b> trucks cannot take drivers. Maximum <b>${MAX_CONDUCTORES}</b> drivers per truck.</p></div></div>
+    pintar("drivers", `<div class="section-head"><div><h2>Drivers</h2><p>${data.conductores.length} unique names. Assign a plant and truck. Assigning a driver to an <b>Open</b> truck changes it to <b>Manned</b>; <b>Down</b> trucks cannot take drivers. Maximum <b>${MAX_CONDUCTORES}</b> drivers per truck. New drivers are saved as <b>Last Name, First Name</b>.</p></div></div>
     <form class="driver-form" onsubmit="agregarConductor(event)">
-      <input id="newDriverName" required placeholder="Driver full name">
+      <input id="newDriverLast" required maxlength="70" autocomplete="off"
+        placeholder="Last Name" title="Letters only" oninput="filtrarLetras(this)">
+      <input id="newDriverFirst" required maxlength="70" autocomplete="off"
+        placeholder="First Name" title="Letters only" oninput="filtrarLetras(this)">
       <select id="newDriverPlant" onchange="sincronizarCamionNuevo()">${["Unassigned", ...plantas()].map(p => `<option>${esc(p)}</option>`).join("")}</select>
       <select id="newDriverTruck" onchange="sincronizarPlantaNueva()" title="Open trucks change to Manned when a driver is assigned. Down trucks cannot take drivers.">
         ${opcionesCamiones(null, "No truck")}</select>
@@ -535,11 +573,15 @@ window.sincronizarCamionNuevo = () => {
     }
 };
 
-window.agregarCamion = e => {
+window.agregarCamion = async e => {
     e.preventDefault();
     const raw = $("newTruckNumber").value.trim();
-    if (!/^\d+$/.test(raw)) return toast("Enter a valid truck number", true);
-    accion("/api/mixer/camion/agregar", { numero: +raw });
+    if (!/^\d+$/.test(raw)) return toast("Enter a valid truck number (digits only)", true);
+    const numero = +raw;
+    if (numero <= 0) return toast("Enter a valid truck number (digits only)", true);
+    if (data.camiones.some(c => c.numero === numero))
+        return toast(`Duplicate truck: #${numero} is already in the system`, true);
+    if (await accion("/api/mixer/camion/agregar", { numero })) $("newTruckNumber").value = "";
 };
 
 window.eliminarCamion = numero => {
@@ -590,12 +632,22 @@ window.actualizarConductor = (idConductor, campo, valor) => {
     accion("/api/mixer/conductor/actualizar", body);
 };
 
-window.agregarConductor = e => {
+window.agregarConductor = async e => {
     e.preventDefault();
-    const nombre = $("newDriverName").value.trim();
-    if (!nombre) return toast("Enter the driver name", true);
+    const apellidos = $("newDriverLast").value.trim(), nombres = $("newDriverFirst").value.trim();
+    if (!apellidos) { $("newDriverLast").focus(); return toast("Enter the last name", true); }
+    if (!nombres) { $("newDriverFirst").focus(); return toast("Enter the first name", true); }
+    if (!SOLO_LETRAS.test(apellidos)) return toast("The last name allows only letters, spaces, hyphens and apostrophes", true);
+    if (!SOLO_LETRAS.test(nombres)) return toast("The first name allows only letters, spaces, hyphens and apostrophes", true);
+
+    // Se guarda y se muestra como "Last Name, First Name"
+    const nombre = `${apellidos}, ${nombres}`;
+    if (data.conductores.some(d => mismoNombre(d.nombre, nombre)))
+        return toast(`Duplicate driver: ${nombre} is already on the list`, true);
+
     const camion = $("newDriverTruck").value;
-    accion("/api/mixer/conductor/agregar", { nombre, planta: $("newDriverPlant").value, numeroCamion: camion ? +camion : null });
+    if (await accion("/api/mixer/conductor/agregar", { apellidos, nombres, planta: $("newDriverPlant").value, numeroCamion: camion ? +camion : null }))
+        { $("newDriverLast").value = ""; $("newDriverFirst").value = ""; }
 };
 
 window.eliminarConductor = idConductor => {

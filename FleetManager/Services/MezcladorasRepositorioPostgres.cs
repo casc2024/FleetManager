@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using FleetManager.Models;
 using Npgsql;
 
@@ -51,6 +52,14 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         cmd.Parameters.AddWithValue("ip", ip ?? "");
         await cmd.ExecuteNonQueryAsync(ct);
     }
+
+    // Nombre del conductor: letras (con tildes y ñ), números, espacios, comas,
+    // puntos, guiones y apóstrofes. Mismo criterio que la pantalla.
+    private static readonly Regex NombreValido = new(@"^[\p{L}\p{N} ,.'\-]+$", RegexOptions.Compiled);
+
+    // First Name / Last Name: solo letras (con tildes y ñ), espacios, guiones,
+    // apóstrofes y puntos de abreviatura. Deben empezar por letra.
+    private static readonly Regex SoloLetras = new(@"^\p{L}[\p{L} '\-.]*$", RegexOptions.Compiled);
 
     private static string? Vacio(string? s) =>
         string.IsNullOrWhiteSpace(s) || s.Trim().Equals("Unassigned", StringComparison.OrdinalIgnoreCase) ? null : s.Trim();
@@ -207,7 +216,7 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
     // ------------------------------------------------------------------
     public async Task<Resultado> AgregarCamionAsync(CamionRequest req, string usuario, string? ip, CancellationToken ct = default)
     {
-        if (req.Numero <= 0) return Resultado.Mal("Enter a valid truck number");
+        if (req.Numero <= 0) return Resultado.Mal("Enter a valid truck number (digits only)");
 
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
@@ -216,7 +225,8 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
         await using (var cmd = new NpgsqlCommand("SELECT 1 FROM mezcladoras.camion WHERE numero = @n", cn, tx))
         {
             cmd.Parameters.AddWithValue("n", req.Numero);
-            if (await cmd.ExecuteScalarAsync(ct) != null) return Resultado.Mal("This truck is already registered");
+            if (await cmd.ExecuteScalarAsync(ct) != null)
+                return Resultado.Mal($"Duplicate truck: #{req.Numero} is already in the system");
         }
 
         await using (var cmd = new NpgsqlCommand(@"
@@ -512,14 +522,32 @@ public class MezcladorasRepositorioPostgres : IMezcladorasRepositorio
     public Task<Resultado> AgregarConductorAsync(ConductorRequest req, string usuario, string? ip, CancellationToken ct = default)
         => EnTransaccionAsync(usuario, ip, async (cn, tx) =>
     {
-        var nombre = (req.Nombre ?? "").Trim();
-        if (nombre.Length == 0) return Resultado.Mal("Enter the driver name");
+        // El alta manda First Name y Last Name por separado: se guarda "Apellidos, Nombres"
+        var nombres = (req.Nombres ?? "").Trim();
+        var apellidos = (req.Apellidos ?? "").Trim();
+        string nombre;
+        if (nombres.Length > 0 || apellidos.Length > 0)
+        {
+            if (apellidos.Length == 0) return Resultado.Mal("Enter the last name");
+            if (nombres.Length == 0) return Resultado.Mal("Enter the first name");
+            if (!SoloLetras.IsMatch(apellidos)) return Resultado.Mal("The last name allows only letters, spaces, hyphens and apostrophes");
+            if (!SoloLetras.IsMatch(nombres)) return Resultado.Mal("The first name allows only letters, spaces, hyphens and apostrophes");
+            nombre = $"{apellidos}, {nombres}";
+        }
+        else
+        {
+            nombre = (req.Nombre ?? "").Trim();
+            if (nombre.Length == 0) return Resultado.Mal("Enter the driver name");
+            if (!NombreValido.IsMatch(nombre))
+                return Resultado.Mal("The driver name allows only letters, numbers, spaces, commas, periods, hyphens and apostrophes");
+        }
         if (nombre.Length > 150) nombre = nombre[..150];
 
         await using (var cmd = new NpgsqlCommand("SELECT 1 FROM mezcladoras.conductor WHERE lower(nombre) = lower(@n)", cn, tx))
         {
             cmd.Parameters.AddWithValue("n", nombre);
-            if (await cmd.ExecuteScalarAsync(ct) != null) return Resultado.Mal("This driver is already on the list");
+            if (await cmd.ExecuteScalarAsync(ct) != null)
+                return Resultado.Mal($"Duplicate driver: {nombre} is already on the list");
         }
 
         // Con camión: Manned u Open (el Open pasa a Manned); el conductor hereda su planta

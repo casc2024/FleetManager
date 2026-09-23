@@ -141,7 +141,7 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
 .ghost-btn{background:#eef1f6;color:var(--ink);border:0;border-radius:10px;padding:10px 14px;font:700 13px inherit;cursor:pointer}
 .truck-form{display:flex;gap:10px;max-width:460px;margin-bottom:18px}
 .truck-form input{flex:1;border:1px solid var(--line);background:#fff;border-radius:11px;padding:11px 12px;font:14px inherit}
-.driver-form{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:10px;margin-bottom:18px}
+.driver-form{display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr auto;gap:10px;margin-bottom:18px}
 .driver-form input,.driver-form select{border:1px solid var(--line);background:#fff;border-radius:11px;padding:11px 12px;font:14px inherit}
 
 /* Informe por correo */
@@ -196,6 +196,7 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
   .metrics{grid-template-columns:repeat(2,1fr)}
   .plant-grid{grid-template-columns:repeat(2,1fr)}
   .driver-form{grid-template-columns:1fr 1fr}
+  .driver-form .primary-btn{grid-column:1 / -1}
 }
 @media(max-width:700px){
   .fleet-overview .metrics{grid-template-columns:1fr 1fr}

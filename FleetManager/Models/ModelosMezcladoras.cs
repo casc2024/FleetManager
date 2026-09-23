@@ -138,7 +138,11 @@ public class CamionRequest
 public class ConductorRequest
 {
     public long IdConductor { get; set; }
+    /// <summary>Nombre completo ya armado ("Apellidos, Nombres"). Si vienen
+    /// Nombres/Apellidos por separado, el servidor arma y valida a partir de ellos.</summary>
     public string? Nombre { get; set; }
+    public string? Nombres { get; set; }
+    public string? Apellidos { get; set; }
     public string? Planta { get; set; }
     public int? NumeroCamion { get; set; }
     public string? Usuario { get; set; }
