@@ -1,13 +1,13 @@
-using System.Data;
 using FleetManager.Models;
 using Npgsql;
 
 namespace FleetManager.Services;
 
 /// <summary>
-/// Acceso a datos sobre PostgreSQL (esquema flota) usando Npgsql.
-/// Cada escritura corre en una transacción con set_config('app.usuario'/'app.ip')
-/// para que los triggers de auditoría registren usuario e IP.
+/// Fleet board access over PostgreSQL (schema "fleet"). Rebuilt from the
+/// Fleet_Manager_v15 design: equipment, plants, drivers, plant-per-truck,
+/// daily performance, snapshots and a change log. Each change is written to
+/// fleet.change_log with the signed-in user and client IP.
 /// </summary>
 public class FlotaRepositorioPostgres : IFlotaRepositorio
 {
@@ -21,12 +21,11 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
     }
 
     // ------------------------------------------------------------------
-    // Cadena de conexión: Railway expone DATABASE_URL (postgresql://user:pass@host:port/db)
+    // Connection string: Railway exposes DATABASE_URL (postgresql://user:pass@host:port/db)
+    // Shared by the other repositories (mezcladoras, seguridad).
     // ------------------------------------------------------------------
     public static string ConstruirCadenaConexion(IConfiguration config)
     {
-        // Prioridad: variable DATABASE_URL (Railway) > ConnectionStrings:Flota (appsettings.json).
-        // Ambas aceptan formato URL (postgresql://user:pass@host:port/db) o formato clave=valor.
         var valor = Environment.GetEnvironmentVariable("DATABASE_URL");
         if (string.IsNullOrWhiteSpace(valor))
             valor = config.GetConnectionString("Flota");
@@ -35,7 +34,7 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
 
         valor = valor.Trim();
         if (!valor.StartsWith("postgres", StringComparison.OrdinalIgnoreCase) || !valor.Contains("://"))
-            return valor; // ya viene en formato Host=...;Username=...
+            return valor;
 
         var uri = new Uri(valor);
         var userInfo = uri.UserInfo.Split(':', 2);
@@ -59,302 +58,462 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
         return cn;
     }
 
-    private static async Task FijarContextoAuditoriaAsync(NpgsqlConnection cn, NpgsqlTransaction tx, string usuario, string? ip, CancellationToken ct)
-    {
-        await using var cmd = new NpgsqlCommand(
-            "SELECT set_config('app.usuario', @u, true), set_config('app.ip', @ip, true)", cn, tx);
-        cmd.Parameters.AddWithValue("u", usuario);
-        cmd.Parameters.AddWithValue("ip", (object?)ip ?? DBNull.Value);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
+    private static string Norm(string? s) => (s ?? "").Trim();
+    private static object NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? DBNull.Value : s.Trim();
 
-    // ------------------------------------------------------------------
-    // Verificación de conexión al arrancar (no crea ni modifica nada)
-    // ------------------------------------------------------------------
-    public async Task VerificarConexionAsync(CancellationToken ct = default)
-    {
-        await using var cn = await AbrirAsync(ct);
-        await using var cmd = new NpgsqlCommand("SELECT count(*) FROM flota.v_tablero_flota", cn);
-        var n = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
-        _log.LogInformation("Conectado a PostgreSQL. Equipos en flota.v_tablero_flota: {n}", n);
-    }
-
-    // ------------------------------------------------------------------
-    // Lectura
-    // ------------------------------------------------------------------
-    public async Task<DatosTablero> ObtenerDatosAsync(CancellationToken ct = default)
-    {
-        await using var cn = await AbrirAsync(ct);
-        var datos = new DatosTablero();
-
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT numero_equipo, grupo, es_camion, familia, numero_camion, numero_remolque,
-                   ubicacion, estado, carga, actualizado_por, fecha_actualizacion
-            FROM flota.v_tablero_flota
-            ORDER BY grupo, numero_equipo", cn))
-        await using (var rd = await cmd.ExecuteReaderAsync(ct))
-        {
-            while (await rd.ReadAsync(ct))
-            {
-                datos.Equipos.Add(new EquipoFila
-                {
-                    NumeroEquipo = rd.GetString(0),
-                    Grupo = rd.GetString(1),
-                    EsCamion = rd.GetBoolean(2),
-                    Familia = rd.GetString(3),
-                    NumeroCamion = rd.IsDBNull(4) ? null : rd.GetString(4),
-                    NumeroRemolque = rd.IsDBNull(5) ? null : rd.GetString(5),
-                    Ubicacion = rd.IsDBNull(6) ? null : rd.GetString(6),
-                    Estado = rd.IsDBNull(7) ? null : rd.GetString(7),
-                    Carga = rd.IsDBNull(8) ? null : rd.GetString(8),
-                    ActualizadoPor = rd.GetString(9),
-                    FechaActualizacion = rd.GetDateTime(10)
-                });
-            }
-        }
-
-        datos.Catalogos.Ubicaciones = await LeerCatalogoAsync(cn, "SELECT codigo, nombre, NULL FROM flota.ubicacion WHERE activo ORDER BY orden, codigo", ct);
-        datos.Catalogos.Estados = await LeerCatalogoAsync(cn, "SELECT codigo, nombre, color_hex FROM flota.estado_equipo WHERE activo ORDER BY orden, codigo", ct);
-        datos.Catalogos.Cargas = await LeerCatalogoAsync(cn, "SELECT codigo, nombre, color_hex FROM flota.estado_carga WHERE activo ORDER BY orden, codigo", ct);
-
-        // Camiones disponibles para el dropdown de cada remolque, agrupados por familia (CT / T)
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT g.familia, e.numero_equipo
-            FROM flota.equipo e JOIN flota.grupo_equipo g ON g.id_grupo = e.id_grupo
-            WHERE g.es_camion AND e.activo
-            ORDER BY g.familia, e.numero_equipo", cn))
-        await using (var rd = await cmd.ExecuteReaderAsync(ct))
-        {
-            while (await rd.ReadAsync(ct))
-            {
-                var fam = rd.GetString(0);
-                if (!datos.Catalogos.CamionesPorFamilia.TryGetValue(fam, out var lista))
-                    datos.Catalogos.CamionesPorFamilia[fam] = lista = new List<string>();
-                lista.Add(rd.GetString(1));
-            }
-        }
-
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT numero_equipo, campo, valor_anterior, valor_nuevo, usuario, fecha
-            FROM flota.historial_cambio ORDER BY fecha DESC, id_historial DESC LIMIT 30", cn))
-        await using (var rd = await cmd.ExecuteReaderAsync(ct))
-        {
-            while (await rd.ReadAsync(ct))
-            {
-                datos.Historial.Add(new HistorialItem
-                {
-                    NumeroEquipo = rd.GetString(0),
-                    Campo = rd.GetString(1),
-                    ValorAnterior = rd.IsDBNull(2) ? null : rd.GetString(2),
-                    ValorNuevo = rd.IsDBNull(3) ? null : rd.GetString(3),
-                    Usuario = rd.GetString(4),
-                    Fecha = rd.GetDateTime(5)
-                });
-            }
-        }
-
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT fecha, total, cantidad_ok, cantidad_down, disponibilidad, cantidad_cement, cantidad_ash, cantidad_empty
-            FROM flota.snapshot_semanal ORDER BY fecha DESC, id_snapshot DESC LIMIT 52", cn))
-        await using (var rd = await cmd.ExecuteReaderAsync(ct))
-        {
-            while (await rd.ReadAsync(ct))
-                datos.Snapshots.Add(LeerSnapshot(rd));
-        }
-
-        return datos;
-    }
-
-    private static SnapshotItem LeerSnapshot(NpgsqlDataReader rd) => new()
-    {
-        Fecha = rd.GetDateTime(0),
-        Total = rd.GetInt32(1),
-        Ok = rd.GetInt32(2),
-        Down = rd.GetInt32(3),
-        Disponibilidad = rd.GetDecimal(4),
-        Cement = rd.GetInt32(5),
-        Ash = rd.GetInt32(6),
-        Empty = rd.GetInt32(7)
-    };
-
-    private static async Task<List<OpcionCatalogo>> LeerCatalogoAsync(NpgsqlConnection cn, string sql, CancellationToken ct)
-    {
-        var lista = new List<OpcionCatalogo>();
-        await using var cmd = new NpgsqlCommand(sql, cn);
-        await using var rd = await cmd.ExecuteReaderAsync(ct);
-        while (await rd.ReadAsync(ct))
-            lista.Add(new OpcionCatalogo
-            {
-                Codigo = rd.GetString(0),
-                Nombre = rd.GetString(1),
-                ColorHex = rd.IsDBNull(2) ? null : rd.GetString(2)
-            });
-        return lista;
-    }
-
-    // ------------------------------------------------------------------
-    // Guardar una fila (botón Save). Replica la lógica de la página original:
-    //  - Si el remolque toma un camión que ya jalaba otro remolque, ese otro queda sin camión.
-    //  - Solo se registran en el historial los campos que cambiaron.
-    // ------------------------------------------------------------------
-    public async Task<ResultadoGuardar> GuardarFilaAsync(GuardarFilaRequest req, string usuario, string? ip, CancellationToken ct = default)
-    {
-        await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-        await FijarContextoAuditoriaAsync(cn, tx, usuario, ip, ct);
-
-        long idEquipo; bool esCamion; string familia;
-        string? camionActual, ubicActual, estadoActual, cargaActual;
-
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT e.id_equipo, g.es_camion, g.familia, c.numero_equipo, u.codigo, s.codigo, l.codigo
-            FROM flota.equipo e
-            JOIN flota.grupo_equipo g ON g.id_grupo = e.id_grupo
-            LEFT JOIN flota.equipo c ON c.id_equipo = e.id_camion
-            LEFT JOIN flota.ubicacion u ON u.id_ubicacion = e.id_ubicacion
-            LEFT JOIN flota.estado_equipo s ON s.id_estado = e.id_estado
-            LEFT JOIN flota.estado_carga l ON l.id_carga = e.id_carga
-            WHERE e.numero_equipo = @n AND e.activo
-            FOR UPDATE OF e", cn, tx))
-        {
-            cmd.Parameters.AddWithValue("n", req.NumeroEquipo);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            if (!await rd.ReadAsync(ct))
-                return new ResultadoGuardar { Ok = false, Mensaje = "Equipment not found" };
-            idEquipo = rd.GetInt64(0);
-            esCamion = rd.GetBoolean(1);
-            familia = rd.GetString(2);
-            camionActual = rd.IsDBNull(3) ? null : rd.GetString(3);
-            ubicActual = rd.IsDBNull(4) ? null : rd.GetString(4);
-            estadoActual = rd.IsDBNull(5) ? null : rd.GetString(5);
-            cargaActual = rd.IsDBNull(6) ? null : rd.GetString(6);
-        }
-
-        string? camionNuevo = esCamion ? camionActual : Vacio(req.Camion);
-        string? ubicNueva = Vacio(req.Ubicacion);
-        string? estadoNuevo = Vacio(req.Estado);
-        // El Load (CEMENT/ASH/EMPTY) solo aplica a los equipos neumáticos (familia CT).
-        string? cargaNueva = familia == "CT" ? Vacio(req.Carga) : null;
-
-        var cambios = new List<(string campo, string? viejo, string? nuevo)>();
-        if (camionNuevo != camionActual) cambios.Add(("Truck", camionActual, camionNuevo));
-        if (ubicNueva != ubicActual) cambios.Add(("Location", ubicActual, ubicNueva));
-        if (estadoNuevo != estadoActual) cambios.Add(("Status", estadoActual, estadoNuevo));
-        if (cargaNueva != cargaActual) cambios.Add(("Load", cargaActual, cargaNueva));
-
-        if (cambios.Count == 0)
-            return new ResultadoGuardar { Ok = true, Cambios = 0, Mensaje = "No changes" };
-
-        long? idCamionNuevo = null;
-        if (!esCamion && camionNuevo != null)
-        {
-            // Validar que el camión exista y sea de la misma familia (CT con CT, T con T)
-            await using (var cmd = new NpgsqlCommand(@"
-                SELECT e.id_equipo FROM flota.equipo e JOIN flota.grupo_equipo g ON g.id_grupo = e.id_grupo
-                WHERE e.numero_equipo = @c AND g.es_camion AND g.familia = @f AND e.activo", cn, tx))
-            {
-                cmd.Parameters.AddWithValue("c", camionNuevo);
-                cmd.Parameters.AddWithValue("f", familia);
-                var r = await cmd.ExecuteScalarAsync(ct);
-                if (r == null || r is DBNull)
-                    return new ResultadoGuardar { Ok = false, Mensaje = $"Truck {camionNuevo} is not valid for this trailer" };
-                idCamionNuevo = Convert.ToInt64(r);
-            }
-
-            // Si otro remolque ya tenía ese camión, se le quita (igual que la página original)
-            await using (var cmd = new NpgsqlCommand(@"
-                UPDATE flota.equipo
-                   SET id_camion = NULL, actualizado_por = @u, fecha_actualizacion = CURRENT_TIMESTAMP
-                 WHERE id_camion = @idc AND id_equipo <> @ide
-             RETURNING id_equipo, numero_equipo", cn, tx))
-            {
-                cmd.Parameters.AddWithValue("u", usuario);
-                cmd.Parameters.AddWithValue("idc", idCamionNuevo.Value);
-                cmd.Parameters.AddWithValue("ide", idEquipo);
-                long? otroId = null; string? otroNumero = null;
-                await using (var rd = await cmd.ExecuteReaderAsync(ct))
-                {
-                    if (await rd.ReadAsync(ct)) { otroId = rd.GetInt64(0); otroNumero = rd.GetString(1); }
-                }
-                if (otroId.HasValue)
-                    await InsertarHistorialAsync(cn, tx, otroId.Value, otroNumero!, "Truck", camionNuevo, null, usuario, ip, ct);
-            }
-        }
-
-        await using (var cmd = new NpgsqlCommand(@"
-            UPDATE flota.equipo SET
-                id_camion    = @idc,
-                id_ubicacion = (SELECT id_ubicacion FROM flota.ubicacion WHERE codigo = @ub),
-                id_estado    = (SELECT id_estado FROM flota.estado_equipo WHERE codigo = @es),
-                id_carga     = (SELECT id_carga FROM flota.estado_carga WHERE codigo = @ca),
-                actualizado_por = @u,
-                fecha_actualizacion = CURRENT_TIMESTAMP
-            WHERE id_equipo = @ide", cn, tx))
-        {
-            cmd.Parameters.AddWithValue("idc", (object?)idCamionNuevo ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("ub", (object?)ubicNueva ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("es", (object?)estadoNuevo ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("ca", (object?)cargaNueva ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("u", usuario);
-            cmd.Parameters.AddWithValue("ide", idEquipo);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
-
-        foreach (var (campo, viejo, nuevo) in cambios)
-            await InsertarHistorialAsync(cn, tx, idEquipo, req.NumeroEquipo, campo, viejo, nuevo, usuario, ip, ct);
-
-        await tx.CommitAsync(ct);
-        return new ResultadoGuardar { Ok = true, Cambios = cambios.Count, Mensaje = "Saved — truck/trailer pairing updated" };
-    }
-
-    private static async Task InsertarHistorialAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long idEquipo, string numero,
-        string campo, string? viejo, string? nuevo, string usuario, string? ip, CancellationToken ct)
+    private static async Task LogAsync(NpgsqlConnection cn, NpgsqlTransaction tx, string? equipo, string campo,
+        string? anterior, string? nuevo, string usuario, string? ip, CancellationToken ct)
     {
         await using var cmd = new NpgsqlCommand(@"
-            INSERT INTO flota.historial_cambio (id_equipo, numero_equipo, campo, valor_anterior, valor_nuevo, usuario, ip)
-            VALUES (@ide, @n, @c, @v, @nv, @u, NULLIF(@ip, '')::inet)", cn, tx);
-        cmd.Parameters.AddWithValue("ide", idEquipo);
-        cmd.Parameters.AddWithValue("n", numero);
-        cmd.Parameters.AddWithValue("c", campo);
-        cmd.Parameters.AddWithValue("v", (object?)viejo ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("nv", (object?)nuevo ?? DBNull.Value);
+            INSERT INTO fleet.change_log (equipment, field, old_value, new_value, changed_by, changed_ip)
+            VALUES (@e, @f, @o, @n, @u, NULLIF(@ip,'')::inet)", cn, tx);
+        cmd.Parameters.AddWithValue("e", (object?)equipo ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("f", campo);
+        cmd.Parameters.AddWithValue("o", (object?)anterior ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("n", (object?)nuevo ?? DBNull.Value);
         cmd.Parameters.AddWithValue("u", usuario);
         cmd.Parameters.AddWithValue("ip", ip ?? "");
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
     // ------------------------------------------------------------------
-    // Weekly Snapshot
+    public async Task VerificarConexionAsync(CancellationToken ct = default)
+    {
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand("SELECT count(*) FROM fleet.equipment", cn);
+        var n = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        _log.LogInformation("Fleet board connected. Equipment: {n}", n);
+    }
+
+    // ------------------------------------------------------------------
+    // Read
+    // ------------------------------------------------------------------
+    public async Task<DatosTablero> ObtenerDatosAsync(CancellationToken ct = default)
+    {
+        await using var cn = await AbrirAsync(ct);
+        var d = new DatosTablero();
+
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT equipment_number, grp, truck_number, location, truck_plant, status, load_status, updated_by, updated_at
+            FROM fleet.equipment ORDER BY grp, equipment_number", cn))
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct))
+                d.Equipos.Add(new Equipo
+                {
+                    NumeroEquipo = rd.GetString(0),
+                    Grupo = rd.GetString(1),
+                    NumeroCamion = rd.IsDBNull(2) ? null : rd.GetString(2),
+                    Ubicacion = rd.IsDBNull(3) ? null : rd.GetString(3),
+                    PlantaCamion = rd.IsDBNull(4) ? null : rd.GetString(4),
+                    Estado = rd.GetString(5),
+                    Carga = rd.GetString(6),
+                    ActualizadoPor = rd.IsDBNull(7) ? null : rd.GetString(7),
+                    FechaActualizacion = rd.GetDateTime(8)
+                });
+
+        await using (var cmd = new NpgsqlCommand("SELECT code FROM fleet.plant ORDER BY code", cn))
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct)) d.Plantas.Add(rd.GetString(0));
+
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT id_driver, name, plant, truck FROM fleet.driver WHERE is_active ORDER BY lower(name)", cn))
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct))
+                d.Conductores.Add(new Conductor
+                {
+                    IdConductor = rd.GetInt64(0),
+                    Nombre = rd.GetString(1),
+                    Planta = rd.IsDBNull(2) ? null : rd.GetString(2),
+                    Camion = rd.IsDBNull(3) ? null : rd.GetString(3)
+                });
+
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT equipment, field, old_value, new_value, changed_by, changed_at
+            FROM fleet.change_log ORDER BY changed_at DESC, id DESC LIMIT 60", cn))
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct))
+                d.Historial.Add(new HistorialItem
+                {
+                    NumeroEquipo = rd.IsDBNull(0) ? "" : rd.GetString(0),
+                    Campo = rd.GetString(1),
+                    ValorAnterior = rd.IsDBNull(2) ? null : rd.GetString(2),
+                    ValorNuevo = rd.IsDBNull(3) ? null : rd.GetString(3),
+                    Usuario = rd.IsDBNull(4) ? "" : rd.GetString(4),
+                    Fecha = rd.GetDateTime(5)
+                });
+
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT snap_date, total, ok, down, availability, cement, ash, empty
+            FROM fleet.snapshot ORDER BY snap_date DESC, id_snapshot DESC LIMIT 52", cn))
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            while (await rd.ReadAsync(ct))
+                d.Snapshots.Add(new SnapshotItem
+                {
+                    Fecha = rd.GetDateTime(0),
+                    Total = rd.GetInt32(1),
+                    Ok = rd.GetInt32(2),
+                    Down = rd.GetInt32(3),
+                    Disponibilidad = rd.GetDecimal(4),
+                    Cement = rd.GetInt32(5),
+                    Ash = rd.GetInt32(6),
+                    Empty = rd.GetInt32(7)
+                });
+
+        return d;
+    }
+
+    // ------------------------------------------------------------------
+    // Save a board row
+    // ------------------------------------------------------------------
+    public async Task<Resultado> GuardarFilaAsync(GuardarFilaRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var eq = Norm(req.NumeroEquipo);
+        if (eq.Length == 0) return Resultado.Mal("Equipment Number is required.");
+
+        await using var cn = await AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+
+        // Current values
+        string grupo, truckNo, loc, plant, status, load;
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT grp, truck_number, location, truck_plant, status, load_status FROM fleet.equipment WHERE equipment_number = @e FOR UPDATE", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("e", eq);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Resultado.Mal("Equipment not found.");
+            grupo = rd.GetString(0);
+            truckNo = rd.IsDBNull(1) ? "" : rd.GetString(1);
+            loc = rd.IsDBNull(2) ? "" : rd.GetString(2);
+            plant = rd.IsDBNull(3) ? "" : rd.GetString(3);
+            status = rd.GetString(4);
+            load = rd.GetString(5);
+        }
+
+        var esCamion = grupo.StartsWith("TRUCK", StringComparison.OrdinalIgnoreCase);
+        // Next values. Trucks keep their truck_number (auto pairing) and set truck_plant;
+        // trailers set truck_number and never have truck_plant.
+        var nTruck = esCamion ? truckNo : Norm(req.Camion);
+        var nLoc = Norm(req.Ubicacion);
+        var nPlant = esCamion ? Norm(req.PlantaCamion) : "";
+        var nStatus = Norm(req.Estado);
+        var nLoad = Norm(req.Carga);
+        if (nLoad.Length == 0) nLoad = "EMPTY";
+
+        var cambios = new List<(string campo, string? ant, string? nue)>();
+
+        // If a trailer takes a truck already pulled by another trailer, release the other.
+        if (!esCamion && nTruck.Length > 0 && !nTruck.Equals(truckNo, StringComparison.OrdinalIgnoreCase))
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                UPDATE fleet.equipment SET truck_number = NULL, updated_by = @u, updated_at = CURRENT_TIMESTAMP
+                WHERE grp LIKE 'TRAILER%' AND truck_number = @t AND equipment_number <> @e
+                RETURNING equipment_number", cn, tx);
+            cmd.Parameters.AddWithValue("u", usuario);
+            cmd.Parameters.AddWithValue("t", nTruck);
+            cmd.Parameters.AddWithValue("e", eq);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            var liberados = new List<string>();
+            while (await rd.ReadAsync(ct)) liberados.Add(rd.GetString(0));
+            await rd.CloseAsync();
+            foreach (var otro in liberados)
+                await LogAsync(cn, tx, otro, "Truck", nTruck, "", usuario, ip, ct);
+        }
+
+        if ((truckNo ?? "") != nTruck) cambios.Add(("Truck", truckNo, nTruck));
+        if ((loc ?? "") != nLoc) cambios.Add(("Location", loc, nLoc));
+        if (esCamion && (plant ?? "") != nPlant) cambios.Add(("Plant", plant, nPlant));
+        if ((status ?? "") != nStatus) cambios.Add(("Status", status, nStatus));
+        if ((load ?? "") != nLoad) cambios.Add(("Load", load, nLoad));
+
+        if (cambios.Count == 0) { await tx.CommitAsync(ct); return Resultado.Bien("No changes."); }
+
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE fleet.equipment
+               SET truck_number = @t, location = @l, truck_plant = @p,
+                   status = @s, load_status = @ld, updated_by = @u, updated_at = CURRENT_TIMESTAMP
+             WHERE equipment_number = @e", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("t", NullIfEmpty(nTruck));
+            cmd.Parameters.AddWithValue("l", NullIfEmpty(nLoc));
+            cmd.Parameters.AddWithValue("p", NullIfEmpty(nPlant));
+            cmd.Parameters.AddWithValue("s", nStatus);
+            cmd.Parameters.AddWithValue("ld", nLoad);
+            cmd.Parameters.AddWithValue("u", usuario);
+            cmd.Parameters.AddWithValue("e", eq);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var (campo, ant, nue) in cambios)
+            await LogAsync(cn, tx, eq, campo, ant, nue, usuario, ip, ct);
+
+        await tx.CommitAsync(ct);
+        return Resultado.Bien("Saved.");
+    }
+
+    // ------------------------------------------------------------------
+    // Equipment administration
+    // ------------------------------------------------------------------
+    private static readonly string[] Grupos =
+        { "TRUCK T", "TRUCK CT", "TRUCK BUMPER", "TRAILER T", "TRAILER CT", "TRAILER BUMPER" };
+
+    public async Task<Resultado> AgregarEquipoAsync(EquipoRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var eq = Norm(req.NumeroEquipo);
+        var grupo = Norm(req.Grupo).ToUpperInvariant();
+        if (eq.Length == 0) return Resultado.Mal("Enter an equipment number.");
+        if (!Grupos.Contains(grupo)) return Resultado.Mal("Choose a valid equipment type.");
+
+        await using var cn = await AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+
+        await using (var chk = new NpgsqlCommand("SELECT 1 FROM fleet.equipment WHERE lower(equipment_number) = lower(@e)", cn, tx))
+        {
+            chk.Parameters.AddWithValue("e", eq);
+            if (await chk.ExecuteScalarAsync(ct) != null) return Resultado.Mal("Equipment already exists.");
+        }
+
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO fleet.equipment (equipment_number, grp, status, load_status, updated_by)
+            VALUES (@e, @g, '', 'EMPTY', @u)", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("e", eq);
+            cmd.Parameters.AddWithValue("g", grupo);
+            cmd.Parameters.AddWithValue("u", usuario);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await LogAsync(cn, tx, eq, "Equipment added", null, grupo, usuario, ip, ct);
+        await tx.CommitAsync(ct);
+        return Resultado.Bien("Added.");
+    }
+
+    public async Task<Resultado> EliminarEquipoAsync(string numeroEquipo, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var eq = Norm(numeroEquipo);
+        if (eq.Length == 0) return Resultado.Mal("Select equipment to remove.");
+
+        await using var cn = await AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+
+        string grupo;
+        await using (var cmd = new NpgsqlCommand("SELECT grp FROM fleet.equipment WHERE equipment_number = @e FOR UPDATE", cn, tx))
+        {
+            cmd.Parameters.AddWithValue("e", eq);
+            var g = await cmd.ExecuteScalarAsync(ct);
+            if (g == null) return Resultado.Mal("Equipment not found.");
+            grupo = (string)g;
+        }
+
+        var esCamion = grupo.StartsWith("TRUCK", StringComparison.OrdinalIgnoreCase);
+        if (esCamion)
+        {
+            await using (var c1 = new NpgsqlCommand(
+                "UPDATE fleet.equipment SET truck_number = NULL, updated_by = @u, updated_at = CURRENT_TIMESTAMP WHERE grp LIKE 'TRAILER%' AND truck_number = @e", cn, tx))
+            { c1.Parameters.AddWithValue("u", usuario); c1.Parameters.AddWithValue("e", eq); await c1.ExecuteNonQueryAsync(ct); }
+            await using (var c2 = new NpgsqlCommand(
+                "UPDATE fleet.driver SET truck = NULL, updated_by = @u, updated_at = CURRENT_TIMESTAMP WHERE truck = @e", cn, tx))
+            { c2.Parameters.AddWithValue("u", usuario); c2.Parameters.AddWithValue("e", eq); await c2.ExecuteNonQueryAsync(ct); }
+        }
+
+        await using (var del = new NpgsqlCommand("DELETE FROM fleet.equipment WHERE equipment_number = @e", cn, tx))
+        { del.Parameters.AddWithValue("e", eq); await del.ExecuteNonQueryAsync(ct); }
+
+        await LogAsync(cn, tx, eq, "Equipment removed", grupo, "Removed", usuario, ip, ct);
+        await tx.CommitAsync(ct);
+        return Resultado.Bien("Equipment removed.");
+    }
+
+    // ------------------------------------------------------------------
+    // Plants
+    // ------------------------------------------------------------------
+    public async Task<Resultado> AgregarPlantaAsync(string codigo, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var p = Norm(codigo).ToUpperInvariant();
+        if (p.Length == 0) return Resultado.Mal("Enter a plant code.");
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "INSERT INTO fleet.plant (code, created_by) VALUES (@c, @u) ON CONFLICT (code) DO NOTHING", cn);
+        cmd.Parameters.AddWithValue("c", p);
+        cmd.Parameters.AddWithValue("u", usuario);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Plant added.") : Resultado.Mal("Plant already exists.");
+    }
+
+    public async Task<Resultado> EliminarPlantaAsync(string codigo, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var p = Norm(codigo);
+        if (p.Length == 0) return Resultado.Mal("Select a plant.");
+        await using var cn = await AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+
+        await using (var c1 = new NpgsqlCommand(
+            "UPDATE fleet.equipment SET location = NULL WHERE location = @p", cn, tx))
+        { c1.Parameters.AddWithValue("p", p); await c1.ExecuteNonQueryAsync(ct); }
+        await using (var c2 = new NpgsqlCommand(
+            "UPDATE fleet.equipment SET truck_plant = NULL WHERE truck_plant = @p", cn, tx))
+        { c2.Parameters.AddWithValue("p", p); await c2.ExecuteNonQueryAsync(ct); }
+        await using (var c3 = new NpgsqlCommand(
+            "UPDATE fleet.driver SET plant = NULL WHERE plant = @p", cn, tx))
+        { c3.Parameters.AddWithValue("p", p); await c3.ExecuteNonQueryAsync(ct); }
+        await using (var del = new NpgsqlCommand("DELETE FROM fleet.plant WHERE code = @p", cn, tx))
+        { del.Parameters.AddWithValue("p", p); await del.ExecuteNonQueryAsync(ct); }
+
+        await LogAsync(cn, tx, null, "Plant removed", p, "Removed", usuario, ip, ct);
+        await tx.CommitAsync(ct);
+        return Resultado.Bien("Plant removed.");
+    }
+
+    // ------------------------------------------------------------------
+    // Drivers
+    // ------------------------------------------------------------------
+    public async Task<Resultado> AgregarConductorAsync(ConductorFlotaRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var name = Norm(req.Nombre);
+        if (name.Length == 0) return Resultado.Mal("Enter a driver name.");
+        await using var cn = await AbrirAsync(ct);
+        await using (var chk = new NpgsqlCommand(
+            "SELECT 1 FROM fleet.driver WHERE is_active AND lower(name) = lower(@n)", cn))
+        {
+            chk.Parameters.AddWithValue("n", name);
+            if (await chk.ExecuteScalarAsync(ct) != null) return Resultado.Mal("Driver already exists.");
+        }
+        await using var cmd = new NpgsqlCommand(
+            "INSERT INTO fleet.driver (name, updated_by) VALUES (@n, @u) RETURNING id_driver", cn);
+        cmd.Parameters.AddWithValue("n", name);
+        cmd.Parameters.AddWithValue("u", usuario);
+        var id = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        return Resultado.Bien("Driver added.", new { idDriver = id });
+    }
+
+    public async Task<Resultado> ActualizarConductorAsync(ConductorFlotaRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        if (req.IdConductor is not > 0) return Resultado.Mal("Driver not specified.");
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            UPDATE fleet.driver SET plant = @p, truck = @t, updated_by = @u, updated_at = CURRENT_TIMESTAMP
+            WHERE id_driver = @id AND is_active", cn);
+        cmd.Parameters.AddWithValue("p", NullIfEmpty(req.Planta));
+        cmd.Parameters.AddWithValue("t", NullIfEmpty(req.Camion));
+        cmd.Parameters.AddWithValue("u", usuario);
+        cmd.Parameters.AddWithValue("id", req.IdConductor!.Value);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Driver updated.") : Resultado.Mal("Driver not found.");
+    }
+
+    public async Task<Resultado> EliminarConductorAsync(long idConductor, string usuario, string? ip, CancellationToken ct = default)
+    {
+        if (idConductor <= 0) return Resultado.Mal("Driver not specified.");
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE fleet.driver SET is_active = FALSE, updated_by = @u, updated_at = CURRENT_TIMESTAMP WHERE id_driver = @id AND is_active", cn);
+        cmd.Parameters.AddWithValue("u", usuario);
+        cmd.Parameters.AddWithValue("id", idConductor);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Driver removed.") : Resultado.Mal("Driver not found.");
+    }
+
+    // ------------------------------------------------------------------
+    // Weekly snapshot
     // ------------------------------------------------------------------
     public async Task<SnapshotItem> CrearSnapshotAsync(string usuario, string? ip, CancellationToken ct = default)
     {
         await using var cn = await AbrirAsync(ct);
-        await using var tx = await cn.BeginTransactionAsync(ct);
-        await FijarContextoAuditoriaAsync(cn, tx, usuario, ip, ct);
-
         await using var cmd = new NpgsqlCommand(@"
-            INSERT INTO flota.snapshot_semanal
-                (fecha, total, cantidad_ok, cantidad_down, disponibilidad, cantidad_cement, cantidad_ash, cantidad_empty)
-            SELECT CURRENT_DATE,
-                   count(*),
-                   count(*) FILTER (WHERE estado = 'OK'),
-                   count(*) FILTER (WHERE estado = 'DOWN'),
-                   ROUND(CASE WHEN count(*) = 0 THEN 0 ELSE count(*) FILTER (WHERE estado = 'OK') * 100.0 / count(*) END, 1),
-                   count(*) FILTER (WHERE carga = 'CEMENT' AND familia = 'CT'),
-                   count(*) FILTER (WHERE carga = 'ASH' AND familia = 'CT'),
-                   count(*) FILTER (WHERE carga = 'EMPTY' AND familia = 'CT')
-            FROM flota.v_tablero_flota
-            RETURNING fecha, total, cantidad_ok, cantidad_down, disponibilidad, cantidad_cement, cantidad_ash, cantidad_empty", cn, tx);
-
-        SnapshotItem snap;
-        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+            WITH s AS (
+                SELECT count(*) total,
+                       count(*) FILTER (WHERE status='OK') ok,
+                       count(*) FILTER (WHERE status='DOWN') down,
+                       count(*) FILTER (WHERE load_status='CEMENT') cement,
+                       count(*) FILTER (WHERE load_status='ASH') ash,
+                       count(*) FILTER (WHERE load_status='EMPTY') empty
+                FROM fleet.equipment)
+            INSERT INTO fleet.snapshot (snap_date, total, ok, down, availability, cement, ash, empty, created_by)
+            SELECT CURRENT_DATE, total, ok, down,
+                   CASE WHEN total>0 THEN round(ok::numeric*100/total,2) ELSE 0 END,
+                   cement, ash, empty, @u
+            FROM s
+            RETURNING snap_date, total, ok, down, availability, cement, ash, empty", cn);
+        cmd.Parameters.AddWithValue("u", usuario);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        await rd.ReadAsync(ct);
+        return new SnapshotItem
         {
-            await rd.ReadAsync(ct);
-            snap = LeerSnapshot(rd);
-        }
-        await tx.CommitAsync(ct);
-        return snap;
+            Fecha = rd.GetDateTime(0),
+            Total = rd.GetInt32(1),
+            Ok = rd.GetInt32(2),
+            Down = rd.GetInt32(3),
+            Disponibilidad = rd.GetDecimal(4),
+            Cement = rd.GetInt32(5),
+            Ash = rd.GetInt32(6),
+            Empty = rd.GetInt32(7)
+        };
     }
 
-    private static string? Vacio(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+    // ------------------------------------------------------------------
+    // Daily truck performance
+    // ------------------------------------------------------------------
+    public async Task<List<PerfFila>> ListarPerfAsync(CancellationToken ct = default)
+    {
+        var lista = new List<PerfFila>();
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT id_perf, to_char(perf_date,'YYYY-MM-DD'), perf_type, truck, trailer, driver, loads, revenue
+            FROM fleet.performance ORDER BY perf_date DESC, perf_type, truck", cn);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+            lista.Add(new PerfFila
+            {
+                IdPerf = rd.GetInt64(0),
+                Fecha = rd.GetString(1),
+                Tipo = rd.GetString(2),
+                Camion = rd.GetString(3),
+                Remolque = rd.IsDBNull(4) ? null : rd.GetString(4),
+                Conductor = rd.IsDBNull(5) ? null : rd.GetString(5),
+                Cargas = rd.GetInt32(6),
+                Ingreso = rd.GetDecimal(7)
+            });
+        return lista;
+    }
+
+    private static readonly string[] TiposPerf = { "PNEUMATIC", "END DUMP", "BUMPER TRAILER" };
+
+    public async Task<Resultado> GuardarPerfAsync(PerfRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var fecha = Norm(req.Fecha);
+        var tipo = Norm(req.Tipo).ToUpperInvariant();
+        var truck = Norm(req.Camion);
+        if (fecha.Length == 0 || truck.Length == 0 || string.IsNullOrWhiteSpace(req.Conductor))
+            return Resultado.Mal("Select date, truck and driver.");
+        if (!TiposPerf.Contains(tipo)) return Resultado.Mal("Choose a valid truck type.");
+        if (!DateTime.TryParse(fecha, out _)) return Resultado.Mal("Invalid date.");
+        if (req.Cargas < 0 || req.Ingreso < 0) return Resultado.Mal("Enter valid loads and revenue.");
+
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            INSERT INTO fleet.performance (perf_date, perf_type, truck, trailer, driver, loads, revenue, updated_by)
+            VALUES (@d::date, @ty, @tr, @trl, @dr, @ld, @rv, @u)
+            ON CONFLICT (perf_date, perf_type, truck) DO UPDATE
+               SET trailer = EXCLUDED.trailer, driver = EXCLUDED.driver,
+                   loads = EXCLUDED.loads, revenue = EXCLUDED.revenue,
+                   updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP", cn);
+        cmd.Parameters.AddWithValue("d", fecha);
+        cmd.Parameters.AddWithValue("ty", tipo);
+        cmd.Parameters.AddWithValue("tr", truck);
+        cmd.Parameters.AddWithValue("trl", NullIfEmpty(req.Remolque));
+        cmd.Parameters.AddWithValue("dr", NullIfEmpty(req.Conductor));
+        cmd.Parameters.AddWithValue("ld", req.Cargas);
+        cmd.Parameters.AddWithValue("rv", req.Ingreso);
+        cmd.Parameters.AddWithValue("u", usuario);
+        await cmd.ExecuteNonQueryAsync(ct);
+        return Resultado.Bien("Daily result saved.");
+    }
+
+    public async Task<Resultado> EliminarPerfAsync(long idPerf, string usuario, string? ip, CancellationToken ct = default)
+    {
+        if (idPerf <= 0) return Resultado.Mal("Entry not specified.");
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand("DELETE FROM fleet.performance WHERE id_perf = @id", cn);
+        cmd.Parameters.AddWithValue("id", idPerf);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Entry deleted.") : Resultado.Mal("Entry not found.");
+    }
 }

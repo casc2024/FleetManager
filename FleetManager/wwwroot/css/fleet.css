@@ -51,6 +51,26 @@ table.snapshots{min-width:760px}
 .pager-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.pager-controls label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .pager-controls select{min-width:70px;padding:6px 8px}.pager-controls button{padding:7px 11px;min-width:38px}.page-info{font-size:13px;font-weight:700;color:var(--navy);min-width:60px;text-align:center}
 
+/* Administration + daily performance (Fleet_Manager_v15) */
+.admin-note{font-size:13px;color:var(--muted);margin:4px 0 10px}
+.admin-row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:10px 0 18px}
+.admin-row input,.admin-row select{min-width:150px}
+.danger-btn{background:#fee2e2;color:#a52129;border:0;border-radius:9px;padding:9px 13px;font-weight:700;cursor:pointer}
+.plant-list{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.link-remove{border:0;background:#fff0f0;color:var(--red);border-radius:7px;padding:3px 8px;font-size:12px;font-weight:700;cursor:pointer;margin-left:4px}
+#adminPanel h2{margin-top:16px;font-size:16px}
+
+.perf-form{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:12px 0}
+.perf-form label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted)}
+.perf-form input,.perf-form select{min-width:120px}
+.perf-form input[type=number]{max-width:130px}
+.perf-charts{grid-template-columns:repeat(3,1fr)}
+.perf-totals{font-size:13px;margin:10px 0}
+.perf-green{background:#d9f5e1!important;color:#0c6630;font-weight:800}
+.perf-yellow{background:#fff0a8!important;color:#795700;font-weight:800}
+.perf-red{background:#ffdbdc!important;color:#a52129;font-weight:800}
+@media(max-width:1100px){.perf-charts{grid-template-columns:1fr}}
+
 @media(max-width:1100px){.grid-kpi{grid-template-columns:repeat(4,1fr)}.location-grid{grid-template-columns:repeat(3,1fr)}}
 
 @media(max-width:760px){
@@ -77,4 +97,9 @@ header{padding:12px 14px;flex-wrap:wrap;position:static}header h1{font-size:21px
 .board td.action{justify-content:flex-end;padding-top:10px}.board td.action::before{content:"";flex:0}
 .board td.action button{width:100%;padding:11px}
 button,select,input{font-size:16px} /* evita el zoom automático de iOS */
+/* Objetivos táctiles de al menos 44px en celular */
+button,select,input{min-height:44px;touch-action:manipulation}
+.pager-controls button{min-width:44px}
+.board td select{min-height:44px}
+.user-box input{min-height:40px}
 }

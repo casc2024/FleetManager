@@ -3,6 +3,8 @@
 :root{--navy:#101d38;--blue:#165dff;--sky:#eef4ff;--ink:#182033;--muted:#667085;--line:#e7eaf0;--bg:#f5f7fb;--green:#18a874;--red:#e85353;--amber:#e99a2c;--purple:#7759e8}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"DM Sans","Segoe UI",Arial,sans-serif}
+/* En celular evita el retraso del toque y el zoom por doble toque en botones y enlaces */
+button,a,select{touch-action:manipulation}
 
 .topbar{min-height:76px;padding:10px max(24px,calc((100vw - 1240px)/2));display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--navy);color:#fff}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
@@ -257,4 +259,16 @@ td:first-child{font:800 14px Manrope,"Segoe UI",Arial,sans-serif}
   .pg-size select{flex:1 1 auto;min-width:0}
   .pg-btn{flex:0 0 auto;min-width:40px;height:40px;font-size:16px}
   .pg-info{min-width:46px;padding:0 2px}
+  /* Objetivos táctiles de al menos 44px */
+  .icon-btn{width:44px;height:44px}
+  .link-btn{padding:11px 13px;white-space:nowrap}
+  .tab{padding:14px 13px}
+  .primary-btn,.danger-btn,.ghost-btn,.dest button{min-height:44px}
+  .driver-chip{padding:6px 6px 6px 10px}
+  .driver-chip button{min-width:32px;min-height:32px;font-size:20px;display:inline-flex;align-items:center;justify-content:center;margin-right:-4px}
+  .table-select{min-height:44px}
+  .pg-btn{min-height:44px;height:44px;min-width:44px}
+  /* El diálogo cabe en la pantalla aunque aparezca el teclado */
+  .modal{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}
+  .modal-body select{min-height:44px}
 }

@@ -1,0 +1,26 @@
+/* Fleet Manager — Sign-in page */
+:root{--navy:#17324d;--blue:#2f6fb3;--red:#c33d3d;--line:#dce4ec;--text:#1d2733;--muted:#6b7785;--bg:#eef3f9}
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px;
+  font-family:Segoe UI,Arial,sans-serif;color:var(--text);
+  background:linear-gradient(160deg,#17324d,#24496b)}
+button,a,input{touch-action:manipulation}
+
+.login-wrap{width:100%;max-width:400px}
+.login-card{background:#fff;border-radius:18px;padding:34px 30px 30px;
+  box-shadow:0 18px 50px #0b1e3340;display:flex;flex-direction:column}
+.login-logo{height:54px;width:auto;align-self:center;margin-bottom:14px}
+.login-card h1{margin:0;text-align:center;font-size:24px;color:var(--navy)}
+.login-sub{margin:4px 0 22px;text-align:center;color:var(--muted);font-size:14px}
+
+.login-card label{font-size:12px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
+.login-card input{border:1px solid var(--line);border-radius:10px;padding:12px 13px;
+  font-size:16px;margin-bottom:16px;background:#fff;min-height:48px}
+.login-card input:focus{outline:2px solid var(--blue);border-color:var(--blue)}
+
+.login-error{color:var(--red);font-size:13px;font-weight:600;min-height:18px;margin-bottom:8px}
+.login-btn{background:var(--blue);color:#fff;border:0;border-radius:10px;
+  padding:13px;font-size:16px;font-weight:700;cursor:pointer;min-height:50px}
+.login-btn:hover{background:#2a6099}
+.login-btn:disabled{opacity:.6;cursor:wait}

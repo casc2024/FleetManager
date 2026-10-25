@@ -1,0 +1,38 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17324d">
+<meta name="robots" content="noindex">
+<title>Sign in — Fleet Manager</title>
+<link rel="icon" type="image/png" href="~/img/logo.png">
+<link rel="apple-touch-icon" href="~/img/logo.png">
+<link rel="stylesheet" href="~/css/auth.css" asp-append-version="true">
+</head>
+<body>
+<main class="login-wrap">
+  <form id="loginForm" class="login-card" autocomplete="on" novalidate>
+    <img class="login-logo" src="~/img/jck-logo.jpg" alt="JCK" asp-append-version="true">
+    <h1>Fleet Manager</h1>
+    <p class="login-sub">Sign in to continue</p>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           placeholder="Your username" maxlength="60" autocapitalize="none" spellcheck="false" required>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password"
+           placeholder="Your password" maxlength="100" required>
+
+    <div id="loginError" class="login-error" role="alert"></div>
+
+    <button type="submit" id="loginBtn" class="login-btn">Sign in</button>
+  </form>
+</main>
+<script src="~/js/login.js" asp-append-version="true"></script>
+</body>
+</html>

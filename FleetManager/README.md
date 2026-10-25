@@ -4,6 +4,46 @@ Réplica funcional del tablero **Fleet Manager** (KPIs, Location Overview, gráf
 Fleet Control Board editable, Weekly Snapshots, Recent Activity y Export CSV) con la
 data persistida en PostgreSQL. Responsive: en celular el tablero se muestra como tarjetas.
 
+## Tablero de flota (esquema `fleet`)
+
+El tablero `/` usa el esquema **`fleet`**, reconstruido a partir del diseño
+Fleet_Manager_v15: equipos (camiones y remolques de familias T, CT y BUMPER),
+plantas, conductores, emparejamiento camión‑remolque, planta por camión,
+**Daily Truck Performance** (ingresos y cargas por día con metas y reporte
+semanal), snapshots e historial de cambios.
+
+Ejecute **una vez** en la base (vuelve a cargar equipos, plantas y conductores
+del seed; conserva performance y snapshots):
+
+```cmd
+psql "postgresql://usuario:clave@host:puerto/bd" -f db/fleet_v15_esquema.sql
+```
+
+Sin este esquema la app arranca igual, pero el tablero `/` no muestra datos.
+
+## Acceso con usuario y contraseña (esquema `seguridad`)
+
+Toda la aplicación requiere iniciar sesión. El menú superior ofrece **Dashboard**
+(tableros de flota y mezcladoras), **Mixer Fleet** y, solo para administradores,
+**Users** (mantenedor de usuarios), además de **Sign out**.
+
+Ejecute **una vez** en la base el esquema de seguridad (crea la tabla de usuarios,
+la auditoría y el administrador inicial):
+
+```cmd
+psql "postgresql://usuario:clave@host:puerto/bd" -f db/seguridad_esquema.sql
+```
+
+- Administrador inicial: usuario **aschereiberc** / contraseña **aA12345!** (cámbiela al entrar).
+- Para una base que ya ejecutó el esquema anterior (login por correo), ejecute una vez
+  `db/seguridad_usuario_login.sql`: agrega el campo usuario y actualiza al administrador.
+- Las contraseñas se guardan como PBKDF2-HMAC-SHA256; nunca en texto plano.
+- Campos del usuario: usuario (es el login), nombre, apellido, correo, teléfono y número de
+  documento (opcionales) y un flag de administrador. El formulario valida en pantalla
+  y en el servidor que no se ingresen caracteres extraños.
+- Si el esquema aún no existe, la app arranca igual pero no se podrá iniciar sesión
+  hasta ejecutar el script.
+
 ## Estructura
 
 La aplicación tiene **dos módulos independientes**:

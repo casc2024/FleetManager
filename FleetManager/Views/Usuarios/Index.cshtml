@@ -1,0 +1,98 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17324d">
+<meta name="robots" content="noindex">
+<title>Users — Fleet Manager</title>
+<link rel="icon" type="image/png" href="~/img/logo.png">
+<link rel="apple-touch-icon" href="~/img/logo.png">
+<link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/menu.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/users.css" asp-append-version="true">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img class="logo" src="~/img/jck-logo.jpg" alt="JCK" asp-append-version="true">
+    <div><h1>Users</h1><small>User administration</small></div>
+  </div>
+</header>
+
+<main>
+<section class="panel">
+  <div class="toolbar">
+    <div><h2 style="margin-bottom:4px">System users</h2><small style="color:var(--muted)">Create, edit and remove the people who can sign in.</small></div>
+    <div class="filters">
+      <input id="search" placeholder="Search name or email">
+      <button class="primary" id="addUser">+ Add user</button>
+    </div>
+  </div>
+  <div class="table-wrap board">
+    <table>
+      <thead><tr><th>Username</th><th>First name</th><th>Last name</th><th>Email</th><th>Phone</th><th>Document</th><th>Role</th><th>Action</th></tr></thead>
+      <tbody id="usersBody"></tbody>
+    </table>
+  </div>
+  <div class="count" id="rowCount"></div>
+</section>
+</main>
+
+<!-- Create / edit dialog -->
+<dialog id="userDialog" class="modal">
+  <form id="userForm" method="dialog" novalidate>
+    <div class="modal-body">
+      <h3 id="dlgTitle">Add user</h3>
+      <input type="hidden" id="idUser">
+      <div class="form-grid">
+        <div class="col-2">
+          <label for="username">Username * <small>(used to sign in)</small></label>
+          <input id="username" maxlength="60" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+        </div>
+        <div>
+          <label for="firstName">First name *</label>
+          <input id="firstName" maxlength="80" autocomplete="off" required>
+        </div>
+        <div>
+          <label for="lastName">Last name *</label>
+          <input id="lastName" maxlength="80" autocomplete="off" required>
+        </div>
+        <div class="col-2">
+          <label for="uemail">Email * <small>(used to sign in)</small></label>
+          <input id="uemail" type="email" maxlength="160" autocomplete="off" required>
+        </div>
+        <div>
+          <label for="phone">Phone <small>(optional)</small></label>
+          <input id="phone" maxlength="40" autocomplete="off" inputmode="tel">
+        </div>
+        <div>
+          <label for="document">Document number <small>(optional)</small></label>
+          <input id="document" maxlength="40" autocomplete="off">
+        </div>
+        <div class="col-2">
+          <label for="password" id="pwdLabel">Password *</label>
+          <input id="password" type="password" maxlength="100" autocomplete="new-password">
+          <small class="hint" id="pwdHint">At least 8 characters, with letters and numbers.</small>
+        </div>
+        <div class="col-2 check">
+          <label class="switch"><input type="checkbox" id="isAdmin"> <span>Administrator</span></label>
+        </div>
+      </div>
+      <div class="modal-error" id="dlgError" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="dlgCancel">Cancel</button>
+        <button type="submit" class="primary" id="dlgSave">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+<script src="~/js/menu.js" asp-append-version="true"></script>
+<script src="~/js/usuarios.js" asp-append-version="true"></script>
+</body>
+</html>

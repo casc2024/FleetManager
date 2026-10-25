@@ -1,0 +1,38 @@
+/* Fleet Manager — lateral menu (shared by the dashboard, mixer and users pages).
+   Desktop: fixed sidebar on the left. Phone/tablet (<=900px): hidden drawer opened
+   with the ☰ button. menu.js builds the markup and adds body.has-sidebar. */
+
+.app-sidebar{position:fixed;top:0;left:0;bottom:0;width:232px;z-index:100;display:flex;flex-direction:column;gap:6px;
+  padding:18px 14px;background:#0f2438;color:#fff;overflow-y:auto;transition:transform .2s ease}
+.sb-brand{display:flex;align-items:center;justify-content:center;margin:0 0 14px;padding:6px 0 4px}
+.sb-brand img{display:block;max-width:100%;height:auto;max-height:86px;background:#fff;border-radius:10px;padding:6px 10px;object-fit:contain}
+.sb-section{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8ea6c2;margin:10px 10px 4px}
+.app-sidebar .menu-link{display:flex;align-items:center;min-height:44px;padding:10px 12px;border-radius:10px;color:#dce7f3;
+  text-decoration:none;font-family:Segoe UI,Arial,sans-serif;font-weight:700;font-size:14px}
+.app-sidebar .menu-link:hover{background:#ffffff14;color:#fff}
+.app-sidebar .menu-link.active{background:#fff;color:#17324d}
+.sb-who{margin-top:auto;padding:14px 12px 4px;border-top:1px solid #ffffff22;font-size:13px}
+.sb-who strong{display:block;font-size:14px;color:#fff}
+.sb-who small{display:block;color:#aebfd3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-sidebar .menu-logout{margin-top:10px;min-height:44px;border:1px solid #ffffff40;background:#ffffff0a;color:#fff;
+  border-radius:10px;font:700 14px Segoe UI,Arial,sans-serif;cursor:pointer}
+.app-sidebar .menu-logout:hover{background:#ffffff1f}
+
+/* Space for the sidebar on desktop */
+body.has-sidebar{padding-left:232px;box-sizing:border-box}
+
+/* Hamburger (phone/tablet only) */
+.sb-toggle{display:none;position:fixed;top:10px;left:10px;z-index:101;width:44px;height:44px;border:0;border-radius:10px;
+  background:#0f2438;color:#fff;font-size:22px;line-height:1;cursor:pointer;align-items:center;justify-content:center;
+  box-shadow:0 4px 14px #0f243866}
+.sb-backdrop{display:none;position:fixed;inset:0;z-index:99;background:#0b1a2a8c}
+
+@media(max-width:900px){
+  body.has-sidebar{padding-left:0}
+  .app-sidebar{transform:translateX(-105%);box-shadow:0 0 30px #0b1a2a66}
+  body.sb-open .app-sidebar{transform:none}
+  .sb-toggle{display:flex}
+  body.sb-open .sb-backdrop{display:block}
+  /* Leave room for the hamburger over the page header */
+  body.has-sidebar header,body.has-sidebar .topbar{padding-left:62px}
+}

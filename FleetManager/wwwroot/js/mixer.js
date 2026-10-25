@@ -681,8 +681,11 @@ document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
 });
 
 $("reloadBtn").onclick = () => cargar("Data reloaded");
-try { $("userName").value = localStorage.getItem(USER_KEY) || ""; } catch { }
-$("userName").addEventListener("change", () => { try { localStorage.setItem(USER_KEY, $("userName").value.trim()); } catch { } });
+// Si la sesión ya fijó el usuario (menu.js), no lo sobreescribas con localStorage.
+if (!$("userName").readOnly) {
+  try { $("userName").value = localStorage.getItem(USER_KEY) || ""; } catch { }
+  $("userName").addEventListener("change", () => { try { localStorage.setItem(USER_KEY, $("userName").value.trim()); } catch { } });
+}
 
 cargar();
 // La pestaña "Email report" puede estar oculta en la vista; si no está, no se

@@ -1,35 +1,31 @@
 namespace FleetManager.Models;
 
-/// <summary>Fila del tablero (vista flota.v_tablero_flota).</summary>
-public class EquipoFila
+// =====================================================================
+//  Fleet board model (schema "fleet") — rebuilt from the Fleet_Manager_v15
+//  design: equipment (trucks & trailers of families T, CT, BUMPER), plants,
+//  drivers, plant-per-truck, daily truck performance, snapshots and history.
+// =====================================================================
+
+/// <summary>A truck or trailer on the Fleet Control Board.</summary>
+public class Equipo
 {
-    public string NumeroEquipo { get; set; } = "";
-    public string Grupo { get; set; } = "";          // TRAILER CT, TRAILER T, TRUCK CT, TRUCK T
-    public bool EsCamion { get; set; }
-    public string Familia { get; set; } = "";        // CT / T
-    public string? NumeroCamion { get; set; }        // remolques: camión asignado
-    public string? NumeroRemolque { get; set; }      // camiones: remolque que jala
-    public string? Ubicacion { get; set; }
-    public string? Estado { get; set; }
-    public string? Carga { get; set; }
-    public string ActualizadoPor { get; set; } = "";
+    public string NumeroEquipo { get; set; } = "";     // equipment_number
+    public string Grupo { get; set; } = "";             // TRUCK T|CT|BUMPER, TRAILER T|CT|BUMPER
+    public string? NumeroCamion { get; set; }           // trailers: assigned truck
+    public string? Ubicacion { get; set; }              // plant where the unit is
+    public string? PlantaCamion { get; set; }           // trucks: assigned plant ("Plant (Trucks)")
+    public string Estado { get; set; } = "";            // OK | DOWN | ""
+    public string Carga { get; set; } = "EMPTY";        // CEMENT | ASH | EMPTY | LOADED
+    public string? ActualizadoPor { get; set; }
     public DateTime FechaActualizacion { get; set; }
 }
 
-public class OpcionCatalogo
+public class Conductor
 {
-    public string Codigo { get; set; } = "";
+    public long IdConductor { get; set; }
     public string Nombre { get; set; } = "";
-    public string? ColorHex { get; set; }
-}
-
-public class Catalogos
-{
-    public List<OpcionCatalogo> Ubicaciones { get; set; } = new();
-    public List<OpcionCatalogo> Estados { get; set; } = new();
-    public List<OpcionCatalogo> Cargas { get; set; } = new();
-    /// <summary>Camiones disponibles por familia: "CT" -> [1262, ...], "T" -> [300, ...]</summary>
-    public Dictionary<string, List<string>> CamionesPorFamilia { get; set; } = new();
+    public string? Planta { get; set; }
+    public string? Camion { get; set; }
 }
 
 public class HistorialItem
@@ -54,33 +50,67 @@ public class SnapshotItem
     public int Empty { get; set; }
 }
 
+/// <summary>Everything the board needs in one read.</summary>
 public class DatosTablero
 {
-    public List<EquipoFila> Equipos { get; set; } = new();
-    public Catalogos Catalogos { get; set; } = new();
+    public List<Equipo> Equipos { get; set; } = new();
+    public List<string> Plantas { get; set; } = new();
+    public List<Conductor> Conductores { get; set; } = new();
     public List<HistorialItem> Historial { get; set; } = new();
     public List<SnapshotItem> Snapshots { get; set; } = new();
 }
 
-/// <summary>Cuerpo del POST /api/guardar (botón Save de una fila).</summary>
+// ----------------------------------------------------------------- requests
 public class GuardarFilaRequest
 {
     public string NumeroEquipo { get; set; } = "";
-    public string? Camion { get; set; }
+    public string? Camion { get; set; }          // trailers: assigned truck
     public string? Ubicacion { get; set; }
+    public string? PlantaCamion { get; set; }    // trucks: assigned plant
     public string? Estado { get; set; }
     public string? Carga { get; set; }
-    public string? Usuario { get; set; }
 }
 
-public class UsuarioRequest
+public class EquipoRequest
 {
-    public string? Usuario { get; set; }
+    public string? NumeroEquipo { get; set; }
+    public string? Grupo { get; set; }
 }
 
-public class ResultadoGuardar
+public class PlantaRequest
 {
-    public bool Ok { get; set; }
-    public int Cambios { get; set; }
-    public string Mensaje { get; set; } = "";
+    public string? Codigo { get; set; }
+}
+
+public class ConductorFlotaRequest
+{
+    public long? IdConductor { get; set; }
+    public string? Nombre { get; set; }
+    public string? Planta { get; set; }
+    public string? Camion { get; set; }
+}
+
+// ----------------------------------------------------------------- performance
+public class PerfFila
+{
+    public long IdPerf { get; set; }
+    public string Fecha { get; set; } = "";       // yyyy-MM-dd
+    public string Tipo { get; set; } = "";         // PNEUMATIC | END DUMP | BUMPER TRAILER
+    public string Camion { get; set; } = "";
+    public string? Remolque { get; set; }
+    public string? Conductor { get; set; }
+    public int Cargas { get; set; }
+    public decimal Ingreso { get; set; }
+}
+
+public class PerfRequest
+{
+    public long? IdPerf { get; set; }
+    public string? Fecha { get; set; }
+    public string? Tipo { get; set; }
+    public string? Camion { get; set; }
+    public string? Remolque { get; set; }
+    public string? Conductor { get; set; }
+    public int Cargas { get; set; }
+    public decimal Ingreso { get; set; }
 }

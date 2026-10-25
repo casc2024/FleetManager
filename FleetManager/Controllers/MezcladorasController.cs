@@ -1,6 +1,7 @@
 using System.Text;
 using FleetManager.Models;
 using FleetManager.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FleetManager.Controllers;
@@ -10,6 +11,7 @@ namespace FleetManager.Controllers;
 /// Módulo independiente del tablero de flota (FlotaController): sus propias
 /// vistas, modelos, repositorio y tablas (esquema PostgreSQL "mezcladoras").
 /// </summary>
+[Authorize]
 public class MezcladorasController : Controller
 {
     private readonly IMezcladorasRepositorio _repo;
@@ -94,6 +96,7 @@ public class MezcladorasController : Controller
     /// Alternativa a la tarea en background: protegido con el token REPORTE_TOKEN.
     /// </summary>
     [HttpPost("/api/mixer/reporte/cron")]
+    [AllowAnonymous]
     public async Task<IActionResult> EnviarReporteCron([FromQuery] string? token, CancellationToken ct)
     {
         var esperado = Environment.GetEnvironmentVariable("REPORTE_TOKEN");

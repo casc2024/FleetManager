@@ -1,0 +1,15 @@
+-- =====================================================================
+--  FLEET MANAGER — Migration: sign in with USERNAME
+--
+--  For databases that already ran seguridad_esquema.sql before the
+--  username field existed. It:
+--    1. adds app_user.username (existing users get their email as username),
+--    2. makes the administrator's username "aschereiberc" with password "aA12345!",
+--    3. makes username required and unique (case-insensitive, active users).
+--  Runs in one transaction: if anything fails, nothing changes.
+--  Safe to run more than once.
+--
+--  Run ONCE:
+--      psql "postgresql://user:pass@host:port/db" -f seguridad_usuario_login.sql
+-- =====================================================================
+

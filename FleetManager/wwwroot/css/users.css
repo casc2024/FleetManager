@@ -1,0 +1,38 @@
+/* Fleet Manager — User maintainer (complements fleet.css) */
+.role-pill{display:inline-block;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.02em}
+.role-pill.admin{background:#e7f0fb;color:#1f4d7a}
+.role-pill.user{background:#eef1f5;color:#53606e}
+
+.row-actions{display:flex;gap:6px;justify-content:flex-end}
+.row-actions button{padding:7px 11px}
+.danger{background:#fff0f0;color:var(--red)}
+
+/* Dialog */
+.modal{border:0;border-radius:16px;padding:0;width:min(560px,calc(100vw - 28px));box-shadow:0 24px 60px #0f1c3a40;color:var(--text)}
+.modal::backdrop{background:#0d1f3899}
+.modal-body{padding:22px;display:flex;flex-direction:column;gap:14px}
+.modal-body h3{margin:0;font-size:20px;color:var(--navy)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.form-grid .col-2{grid-column:1 / -1}
+.form-grid label{display:block;font-size:12px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.03em;margin-bottom:5px}
+.form-grid label small{text-transform:none;letter-spacing:0;font-weight:600;color:var(--muted)}
+.form-grid input[type=text],.form-grid input[type=email],.form-grid input[type=password],.form-grid input:not([type]){
+  width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:16px;min-height:46px;background:#fff}
+.form-grid input:focus{outline:2px solid var(--blue);border-color:var(--blue)}
+.form-grid input.invalid{border-color:var(--red);outline-color:var(--red)}
+.hint{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.check{display:flex;align-items:center}
+.switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;margin:0}
+.switch input{width:20px;height:20px;min-height:0}
+.switch span{font-size:14px;font-weight:700;color:var(--text);text-transform:none;letter-spacing:0}
+
+.modal-error{color:var(--red);font-size:13px;font-weight:600;min-height:18px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px}
+.modal-actions button{padding:11px 16px;min-height:46px}
+
+@media(max-width:620px){
+  .form-grid{grid-template-columns:1fr}
+  .modal-actions{flex-direction:column-reverse}
+  .modal-actions button{width:100%}
+}

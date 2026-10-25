@@ -7,6 +7,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#101d38">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NBR Ready Mix">
 <meta name="description" content="Daily mixer truck control by plant, status, and availability">
 <title>NBR Ready Mix — Fleet Control</title>
 <link rel="icon" type="image/png" href="~/img/nbr-icon.png">
@@ -15,18 +18,17 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="~/css/mixer.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/menu.css" asp-append-version="true">
 </head>
 <body>
 
 <header class="topbar">
   <div class="brand">
-    <span class="brand-logo"><img src="~/img/nbr-logo.png" alt="NBR Ready Mix" asp-append-version="true"></span>
     <div><strong>NBR Ready Mix</strong><small>Operations Control</small></div>
   </div>
   <div class="top-actions">
     <span class="live"><i></i> Active operation</span>
     <span class="user-mini"><label for="userName">You</label><input id="userName" placeholder="Owner" maxlength="100" autocomplete="name"></span>
-    <a class="link-btn" href="/">Fleet Manager</a>
     <button class="icon-btn" id="reloadBtn" title="Reload data">&#8635;</button>
   </div>
 </header>
@@ -59,6 +61,7 @@
 </main>
 
 <div id="toast" role="status"></div>
+<script src="~/js/menu.js" asp-append-version="true"></script>
 <script src="~/js/mixer.js" asp-append-version="true"></script>
 </body>
 </html>

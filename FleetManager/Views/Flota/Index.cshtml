@@ -7,25 +7,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#17324d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fleet Manager">
 <title>Fleet Manager</title>
 <link rel="icon" type="image/png" href="~/img/logo.png">
 <link rel="apple-touch-icon" href="~/img/logo.png">
 <link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/menu.css" asp-append-version="true">
 </head>
 <body>
 <header>
   <div class="brand">
-    <img class="logo" src="~/img/logo.png" alt="R&amp;R Trucking, Inc." asp-append-version="true">
+    <img class="logo" src="~/img/jck-logo.jpg" alt="JCK" asp-append-version="true">
     <div><h1>Fleet Manager</h1><small>PC + Mobile Fleet Control</small></div>
   </div>
   <div class="user-box"><label for="userName">Your name</label><input id="userName" placeholder="Owner" maxlength="100" autocomplete="name"></div>
-  <div class="actions"><a class="secondary" href="/mixer" style="text-decoration:none;display:inline-flex;align-items:center">Mixer Fleet</a><button class="secondary" id="newSnapshot">Weekly Snapshot</button><button class="secondary" id="exportCsv">Export CSV</button></div>
+  <div class="actions"><button class="secondary" id="newSnapshot">Weekly Snapshot</button><button class="secondary" id="exportCsv">Export CSV</button></div>
 </header>
 <main>
 <section class="grid-kpi">
-  <div class="kpi wide"><span>Total Equipment</span><strong id="kTotal">—</strong><div class="kpi-break" id="bTotal"></div></div>
-  <div class="kpi wide"><span>Operational</span><strong id="kOk">—</strong><div class="kpi-break" id="bOk"></div></div>
-  <div class="kpi wide"><span>DOWN</span><strong id="kDown">—</strong><div class="kpi-break" id="bDown"></div></div>
+  <div class="kpi"><span>Total Equipment</span><strong id="kTotal">—</strong></div>
+  <div class="kpi"><span>Operational</span><strong id="kOk">—</strong></div>
+  <div class="kpi"><span>DOWN</span><strong id="kDown">—</strong></div>
   <div class="kpi"><span>Availability</span><strong id="kAvail">—</strong></div>
   <div class="kpi"><span>CEMENT</span><strong id="kCement">—</strong></div>
   <div class="kpi"><span>ASH</span><strong id="kAsh">—</strong></div>
@@ -35,63 +39,94 @@
 <section class="panel"><h2>Location Overview</h2><div id="locationGrid" class="location-grid"></div></section>
 
 <section class="charts">
-  <div class="panel"><h2>Status Overview</h2>
-    <canvas id="statusChart" width="700" height="250"></canvas>
-    <div class="donut-row">
-      <canvas id="statusDonut" class="donut" width="400" height="400"></canvas>
-      <div class="sbreak" id="statusBreak"></div>
-    </div>
+  <div class="panel"><h2>Status Overview</h2><canvas id="statusChart" width="700" height="250"></canvas></div>
+  <div class="panel"><h2>Load Overview</h2><canvas id="loadChart" width="700" height="250"></canvas></div>
+</section>
+
+<section class="panel" id="adminPanel">
+  <h2>Fleet Administration — Add Trucks, Trailers &amp; Drivers</h2>
+  <div class="admin-row">
+    <select id="addType">
+      <option value="TRUCK T">Truck T</option><option value="TRUCK CT">Truck CT</option><option value="TRUCK BUMPER">Bumper Truck</option>
+      <option value="TRAILER T">Trailer T</option><option value="TRAILER CT">Trailer CT</option><option value="TRAILER BUMPER">Bumper Trailer</option>
+      <option value="DRIVER">Driver</option>
+    </select>
+    <input id="addNumber" placeholder="Equipment # / Driver name">
+    <button class="primary" id="addEntity">Add</button>
   </div>
-  <div class="panel"><h2>Load Overview</h2>
-    <canvas id="loadChart" width="700" height="250"></canvas>
-    <div class="load-detail" id="loadDetail"></div>
+
+  <h2>Remove Trucks &amp; Trailers</h2>
+  <p class="admin-note">Select an equipment type and number. Removal also clears its truck/trailer and driver assignments. Daily performance history is preserved.</p>
+  <div class="admin-row">
+    <select id="removeType"><option value="TRUCK">Trucks (all types)</option><option value="TRAILER">Trailers (all types)</option></select>
+    <select id="removeEquipment" aria-label="Equipment to remove"></select>
+    <button class="danger-btn" id="removeEntity">Remove Equipment</button>
+  </div>
+
+  <h2>Plants — Add / Remove</h2>
+  <p class="admin-note">Use Remove beside a plant to delete it. Trucks and drivers assigned to that plant become unassigned.</p>
+  <div class="admin-row"><input id="plantName" placeholder="New plant code / name"><button class="primary" id="addPlant">Add Plant</button></div>
+  <div id="plantList" class="plant-list"></div>
+
+  <h2>Drivers</h2>
+  <div class="table-wrap" style="max-height:260px">
+    <table style="min-width:620px"><thead><tr><th>Driver</th><th>Plant</th><th>Assigned Truck</th><th>Action</th></tr></thead><tbody id="driverBody"></tbody></table>
   </div>
 </section>
 
 <section class="panel">
   <div class="toolbar">
-    <div><h2 style="margin-bottom:4px">Fleet Control Board</h2><small style="color:var(--muted)">Equipment Number is locked. Trailer rows can assign a Truck from the dropdown. Truck rows automatically show the trailer they are pulling.</small></div>
+    <div><h2 style="margin-bottom:4px">Fleet Control Board</h2><small style="color:var(--muted)">Equipment Number is locked. Trailer rows can assign a Truck. Truck rows show the trailer they pull and a plant.</small></div>
     <div class="filters">
       <input id="search" placeholder="Search equipment or truck">
       <select id="fLoc"><option value="">All Locations</option></select>
-      <select id="fStatus"><option value="">All Status</option></select>
-      <select id="fLoad"><option value="">All Loads</option></select>
+      <select id="fStatus"><option value="">All Status</option><option>OK</option><option>DOWN</option></select>
+      <select id="fLoad"><option value="">All Loads</option><option>CEMENT</option><option>ASH</option><option>LOADED</option><option>EMPTY</option></select>
     </div>
   </div>
   <div class="table-wrap board">
     <table>
-      <thead><tr><th>Equipment Number 🔒</th><th>Group</th><th>Truck / Pulling Trailer</th><th>Location</th><th>Status</th><th>Load</th><th>Updated By</th><th>Updated At</th><th>Action</th></tr></thead>
+      <thead><tr><th>Equipment Number 🔒</th><th>Group</th><th>Plant (Trucks)</th><th>Truck / Pulling Trailer</th><th>Location</th><th>Status</th><th>Load</th><th>Updated By</th><th>Updated At</th><th>Action</th></tr></thead>
       <tbody id="fleetBody"></tbody>
     </table>
   </div>
-  <div class="pager">
-    <div class="count" id="rowCount"></div>
-    <div class="pager-controls">
-      <label>Rows per page
-        <select id="pageSize"><option>10</option><option>20</option><option>30</option><option>50</option><option>100</option></select>
-      </label>
-      <button class="secondary" id="pgFirst" title="First">&laquo;</button>
-      <button class="secondary" id="pgPrev" title="Previous">&lsaquo;</button>
-      <span id="pageInfo" class="page-info">1 / 1</span>
-      <button class="secondary" id="pgNext" title="Next">&rsaquo;</button>
-      <button class="secondary" id="pgLast" title="Last">&raquo;</button>
-    </div>
+  <div class="count" id="rowCount"></div>
+</section>
+
+<section class="panel" id="dailyPerformance">
+  <h2>Daily Truck Performance — Pneumatic, End Dump &amp; Bumper Trailer</h2>
+  <p class="admin-note">Daily revenue targets: <b style="color:#18864b">GREEN ≥ $1,200</b> · <b style="color:#a87900">YELLOW $500–$1,199.99</b> · <b style="color:#c33d3d">RED &lt; $500</b>.</p>
+  <div class="perf-form">
+    <label>Date<input type="date" id="perfDate"></label>
+    <label>Truck Type<select id="perfType"><option value="PNEUMATIC">Pneumatic</option><option value="END DUMP">End Dump</option><option value="BUMPER TRAILER">Bumper Trailer</option></select></label>
+    <label>Truck<select id="perfTruck"></select></label>
+    <label>Trailer<select id="perfTrailer"></select></label>
+    <label>Driver<select id="perfDriver"></select></label>
+    <label>Loads<input id="perfLoads" type="number" min="0" step="1" value="0"></label>
+    <label>Revenue ($)<input id="perfRevenue" type="number" min="0" step="0.01" value="0"></label>
+    <button class="primary" id="perfSave">Save Daily Result</button>
+  </div>
+  <div class="toolbar"><h2>Daily Performance Report</h2><div class="filters"><label>Report Date <input type="date" id="perfReportDate"></label><button class="secondary" id="perfExport">Export Daily CSV</button><button class="secondary" id="perfExportWeek">Export Weekly CSV</button></div></div>
+  <div class="table-wrap" style="max-height:380px"><table style="min-width:900px"><thead><tr><th>Type</th><th>Truck</th><th>Trailer</th><th>Driver</th><th>Loads</th><th>Revenue</th><th>Target</th><th>Action</th></tr></thead><tbody id="perfDailyRows"></tbody></table></div>
+  <div class="toolbar" style="margin-top:20px"><h2>Weekly Performance</h2><label>Week starting (Monday) <input type="date" id="perfWeek"></label></div>
+  <div id="perfSummary" class="grid-kpi" style="grid-template-columns:repeat(auto-fit,minmax(155px,1fr))"></div>
+  <div class="charts perf-charts">
+    <div class="panel"><h2>Pneumatic — Weekly Revenue</h2><canvas id="perfChartP" width="700" height="260"></canvas><div id="perfWeekP"></div></div>
+    <div class="panel"><h2>End Dump — Weekly Revenue</h2><canvas id="perfChartE" width="700" height="260"></canvas><div id="perfWeekE"></div></div>
+    <div class="panel"><h2>Bumper Trailer — Weekly Revenue</h2><canvas id="perfChartB" width="700" height="260"></canvas><div id="perfWeekB"></div></div>
   </div>
 </section>
 
 <section class="panel"><h2>Weekly Snapshots</h2>
   <div class="table-wrap board">
-    <table class="snapshots">
-      <thead><tr><th>Date</th><th>Total</th><th>OK</th><th>DOWN</th><th>Availability</th><th>CEMENT</th><th>ASH</th><th>EMPTY</th></tr></thead>
-      <tbody id="snapshotBody"></tbody>
-    </table>
+    <table class="snapshots"><thead><tr><th>Date</th><th>Total</th><th>OK</th><th>DOWN</th><th>Availability</th><th>CEMENT</th><th>ASH</th><th>EMPTY</th></tr></thead><tbody id="snapshotBody"></tbody></table>
   </div>
-  <div id="snapshotPager"></div>
 </section>
 
-<section class="panel"><h2>Recent Activity</h2><div id="history" class="history"><div class="hist">Loading…</div></div><div id="historyPager"></div></section>
+<section class="panel"><h2>Recent Activity</h2><div id="history" class="history"><div class="hist">Loading…</div></div></section>
 </main>
 <div id="toast" class="toast"></div>
+<script src="~/js/menu.js" asp-append-version="true"></script>
 <script src="~/js/fleet.js" asp-append-version="true"></script>
 </body>
 </html>
