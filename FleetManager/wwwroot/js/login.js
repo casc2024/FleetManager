@@ -4,7 +4,8 @@
   const btn = document.getElementById("loginBtn");
   const errBox = document.getElementById("loginError");
 
-  function showError(msg) { errBox.textContent = msg || "Something went wrong. Please try again."; }
+  // Empty string clears the message; a real error passes its own text.
+  function showError(msg) { errBox.textContent = msg; }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
