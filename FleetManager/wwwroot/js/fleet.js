@@ -188,7 +188,8 @@
     const plant = document.querySelector(`.dPlant[data-id="${id}"]`).value;
     const truck = document.querySelector(`.dTruck[data-id="${id}"]`).value;
     const { ok, data } = await api("/api/conductor/actualizar", { idConductor: Number(id), planta: plant, camion: truck });
-    if (!ok) toast((data && data.mensaje) || "Could not update driver.", true); else await loadAll();
+    if (!ok) toast((data && data.mensaje) || "Could not update driver.", true);
+    await loadAll();  // reload either way: on rejection this reverts the dropdown to the stored value
   }
   function renderRemoveEquipment() {
     const type = $("removeType").value, el = $("removeEquipment"), old = el.value;

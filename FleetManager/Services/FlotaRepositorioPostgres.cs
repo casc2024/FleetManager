@@ -387,7 +387,20 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
     public async Task<Resultado> ActualizarConductorAsync(ConductorFlotaRequest req, string usuario, string? ip, CancellationToken ct = default)
     {
         if (req.IdConductor is not > 0) return Resultado.Mal("Driver not specified.");
+        var camion = (req.Camion ?? "").Trim();
         await using var cn = await AbrirAsync(ct);
+
+        // Business rule: a truck can belong to only one driver.
+        if (camion.Length > 0)
+        {
+            await using var dup = new NpgsqlCommand(
+                "SELECT name FROM fleet.driver WHERE is_active AND truck = @t AND id_driver <> @id LIMIT 1", cn);
+            dup.Parameters.AddWithValue("t", camion);
+            dup.Parameters.AddWithValue("id", req.IdConductor!.Value);
+            var otro = await dup.ExecuteScalarAsync(ct) as string;
+            if (otro != null) return Resultado.Mal($"Truck {camion} is already assigned to {otro}.");
+        }
+
         await using var cmd = new NpgsqlCommand(@"
             UPDATE fleet.driver SET plant = @p, truck = @t, updated_by = @u, updated_at = CURRENT_TIMESTAMP
             WHERE id_driver = @id AND is_active", cn);
