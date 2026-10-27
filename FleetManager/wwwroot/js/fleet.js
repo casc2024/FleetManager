@@ -116,8 +116,8 @@
   }
   function truckSelector(r) {
     if (r.grupo.startsWith("TRAILER ")) {
-      const fam = famOf(r.grupo);
-      return `<select class="truck">${options(trucks(fam), r.numeroCamion, "No Truck")}</select>`;
+      // Any trailer may take any truck, regardless of family (T / CT / Bumper).
+      return `<select class="truck">${options(allTrucks(), r.numeroCamion, "No Truck")}</select>`;
     }
     const t = trailerForTruck(r.numeroEquipo);
     return `<span class="auto-pair">${t ? esc(t) : "No Trailer"}</span>`;
