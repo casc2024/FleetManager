@@ -252,6 +252,13 @@
     if (!$("perfTrailer").value) autoPerfTrailer();
   }
   function autoPerfTrailer() { const t = trailerForTruck($("perfTruck").value); if (t) $("perfTrailer").value = t; }
+  function autoPerfDriver() {
+    // Preselect the driver assigned to this truck in the Drivers admin.
+    const truck = $("perfTruck").value;
+    const d = truck ? D.conductores.find((x) => String(x.camion) === String(truck)) : null;
+    if (d) $("perfDriver").value = d.nombre;
+  }
+  function onPerfTruckChange() { autoPerfTrailer(); autoPerfDriver(); }
 
   async function savePerformance() {
     const body = {
@@ -333,7 +340,7 @@
     ["perfDate", "perfReportDate"].forEach((id) => $(id).value = today);
     $("perfWeek").value = monday(today);
     $("perfSave").onclick = savePerformance;
-    $("perfTruck").onchange = autoPerfTrailer;
+    $("perfTruck").onchange = onPerfTruckChange;
     ["perfDate", "perfReportDate", "perfWeek", "perfType"].forEach((id) => $(id).addEventListener("change", renderPerformance));
     $("perfExport").onclick = () => exportPerf("daily");
     $("perfExportWeek").onclick = () => exportPerf("weekly");
