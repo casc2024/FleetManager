@@ -305,4 +305,97 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
         }
         return null;
     }
+
+    // ------------------------------------------------------------------
+    // Email recipients (personnel maintainer)
+    // ------------------------------------------------------------------
+    // Recipient name: letters (any language), spaces, hyphen, apostrophe and dot.
+    private static readonly Regex ReRecipientName = new(@"^\p{L}[\p{L} .'\-]{0,119}$", RegexOptions.Compiled);
+
+    public async Task<List<Recipient>> ListarDestinatariosAsync(CancellationToken ct = default)
+    {
+        var lista = new List<Recipient>();
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT id_recipient, name, email, is_active FROM seguridad.recipient WHERE is_active ORDER BY lower(name)", cn);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+            lista.Add(new Recipient { IdRecipient = rd.GetInt64(0), Name = rd.GetString(1), Email = rd.GetString(2), IsActive = rd.GetBoolean(3) });
+        return lista;
+    }
+
+    private static string? ValidarDestinatario(RecipientRequest req, out string name, out string email)
+    {
+        name = (req.Name ?? "").Trim();
+        email = (req.Email ?? "").Trim();
+        if (!ReRecipientName.IsMatch(name)) return "Name contains invalid characters.";
+        if (email.Length > 160 || !ReEmail.IsMatch(email)) return "Enter a valid email address.";
+        return null;
+    }
+
+    public async Task<Resultado> CrearDestinatarioAsync(RecipientRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        var val = ValidarDestinatario(req, out var name, out var email);
+        if (val != null) return Resultado.Mal(val);
+
+        await using var cn = await AbrirAsync(ct);
+        await using (var chk = new NpgsqlCommand(
+            "SELECT 1 FROM seguridad.recipient WHERE is_active AND lower(email) = lower(@e)", cn))
+        {
+            chk.Parameters.AddWithValue("e", email);
+            if (await chk.ExecuteScalarAsync(ct) != null) return Resultado.Mal("A recipient with that email already exists.");
+        }
+        await using var cmd = new NpgsqlCommand(
+            "INSERT INTO seguridad.recipient (name, email, created_by) VALUES (@n, @e, @u) RETURNING id_recipient", cn);
+        cmd.Parameters.AddWithValue("n", name);
+        cmd.Parameters.AddWithValue("e", email);
+        cmd.Parameters.AddWithValue("u", usuario);
+        var id = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        return Resultado.Bien("Recipient created.", new { idRecipient = id });
+    }
+
+    public async Task<Resultado> ActualizarDestinatarioAsync(RecipientRequest req, string usuario, string? ip, CancellationToken ct = default)
+    {
+        if (req.IdRecipient is not > 0) return Resultado.Mal("Recipient not specified.");
+        var val = ValidarDestinatario(req, out var name, out var email);
+        if (val != null) return Resultado.Mal(val);
+
+        await using var cn = await AbrirAsync(ct);
+        await using (var chk = new NpgsqlCommand(
+            "SELECT 1 FROM seguridad.recipient WHERE is_active AND lower(email) = lower(@e) AND id_recipient <> @id", cn))
+        {
+            chk.Parameters.AddWithValue("e", email);
+            chk.Parameters.AddWithValue("id", req.IdRecipient!.Value);
+            if (await chk.ExecuteScalarAsync(ct) != null) return Resultado.Mal("Another recipient already uses that email.");
+        }
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE seguridad.recipient SET name = @n, email = @e, updated_by = @u, updated_at = CURRENT_TIMESTAMP WHERE id_recipient = @id AND is_active", cn);
+        cmd.Parameters.AddWithValue("n", name);
+        cmd.Parameters.AddWithValue("e", email);
+        cmd.Parameters.AddWithValue("u", usuario);
+        cmd.Parameters.AddWithValue("id", req.IdRecipient!.Value);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Recipient updated.") : Resultado.Mal("Recipient not found.");
+    }
+
+    public async Task<Resultado> EliminarDestinatarioAsync(long idRecipient, string usuario, string? ip, CancellationToken ct = default)
+    {
+        if (idRecipient <= 0) return Resultado.Mal("Recipient not specified.");
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE seguridad.recipient SET is_active = FALSE, updated_by = @u, updated_at = CURRENT_TIMESTAMP WHERE id_recipient = @id AND is_active", cn);
+        cmd.Parameters.AddWithValue("u", usuario);
+        cmd.Parameters.AddWithValue("id", idRecipient);
+        var n = await cmd.ExecuteNonQueryAsync(ct);
+        return n > 0 ? Resultado.Bien("Recipient removed.") : Resultado.Mal("Recipient not found.");
+    }
+
+    public async Task<string?> ObtenerDestinatarioEmailAsync(long idRecipient, CancellationToken ct = default)
+    {
+        await using var cn = await AbrirAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT email FROM seguridad.recipient WHERE id_recipient = @id AND is_active", cn);
+        cmd.Parameters.AddWithValue("id", idRecipient);
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
 }

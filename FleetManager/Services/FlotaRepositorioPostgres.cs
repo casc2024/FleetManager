@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FleetManager.Models;
 using Npgsql;
 
@@ -256,11 +257,20 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
     private static readonly string[] Grupos =
         { "TRUCK T", "TRUCK CT", "TRUCK BUMPER", "TRAILER T", "TRAILER CT", "TRAILER BUMPER" };
 
+    // Reject strange characters in the admin forms.
+    // Equipment number: letters, digits and hyphen (e.g. CT-11, 61-DK, 1262, 33E).
+    private static readonly Regex ReEquipo = new(@"^[A-Za-z0-9][A-Za-z0-9\-]{0,39}$", RegexOptions.Compiled);
+    // Plant code: letters, digits, spaces and hyphen (e.g. LEW, KEMP5, ROYCE CITY).
+    private static readonly Regex RePlanta = new(@"^[A-Za-z0-9][A-Za-z0-9 \-]{0,39}$", RegexOptions.Compiled);
+    // Driver name: letters (any language), spaces, hyphen, apostrophe and dot.
+    private static readonly Regex ReConductor = new(@"^\p{L}[\p{L} .'\-]{0,119}$", RegexOptions.Compiled);
+
     public async Task<Resultado> AgregarEquipoAsync(EquipoRequest req, string usuario, string? ip, CancellationToken ct = default)
     {
         var eq = Norm(req.NumeroEquipo);
         var grupo = Norm(req.Grupo).ToUpperInvariant();
         if (eq.Length == 0) return Resultado.Mal("Enter an equipment number.");
+        if (!ReEquipo.IsMatch(eq)) return Resultado.Mal("Equipment number: only letters, numbers and hyphen.");
         if (!Grupos.Contains(grupo)) return Resultado.Mal("Choose a valid equipment type.");
 
         await using var cn = await AbrirAsync(ct);
@@ -329,6 +339,7 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
     {
         var p = Norm(codigo).ToUpperInvariant();
         if (p.Length == 0) return Resultado.Mal("Enter a plant code.");
+        if (!RePlanta.IsMatch(p)) return Resultado.Mal("Plant code: only letters, numbers, spaces and hyphen.");
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(
             "INSERT INTO fleet.plant (code, created_by) VALUES (@c, @u) ON CONFLICT (code) DO NOTHING", cn);
@@ -369,6 +380,7 @@ public class FlotaRepositorioPostgres : IFlotaRepositorio
     {
         var name = Norm(req.Nombre);
         if (name.Length == 0) return Resultado.Mal("Enter a driver name.");
+        if (!ReConductor.IsMatch(name)) return Resultado.Mal("Driver name: only letters, spaces, hyphen, apostrophe and dot.");
         await using var cn = await AbrirAsync(ct);
         await using (var chk = new NpgsqlCommand(
             "SELECT 1 FROM fleet.driver WHERE is_active AND lower(name) = lower(@n)", cn))

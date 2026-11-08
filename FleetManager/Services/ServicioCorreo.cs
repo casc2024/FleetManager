@@ -5,13 +5,17 @@ using System.Text.Json;
 
 namespace FleetManager.Services;
 
+/// <summary>An email attachment (e.g. the quote PDF).</summary>
+public record AdjuntoCorreo(string Nombre, byte[] Contenido, string TipoMime);
+
 public interface IServicioCorreo
 {
     bool Configurado { get; }
     string Proveedor { get; }
     /// <summary>Envía el correo. Devuelve (ok, mensajeDeError).</summary>
     Task<(bool ok, string? error)> EnviarAsync(IEnumerable<string> para, IEnumerable<string> cc, IEnumerable<string> cco,
-                                               string asunto, string html, string textoPlano, CancellationToken ct = default);
+                                               string asunto, string html, string textoPlano, CancellationToken ct = default,
+                                               IEnumerable<AdjuntoCorreo>? adjuntos = null);
 }
 
 /// <summary>
@@ -57,7 +61,8 @@ public class ServicioCorreo : IServicioCorreo
         : !string.IsNullOrWhiteSpace(_host) ? $"SMTP {_host}:{_puerto}" : "sin configurar";
 
     public async Task<(bool ok, string? error)> EnviarAsync(IEnumerable<string> para, IEnumerable<string> cc, IEnumerable<string> cco,
-        string asunto, string html, string textoPlano, CancellationToken ct = default)
+        string asunto, string html, string textoPlano, CancellationToken ct = default,
+        IEnumerable<AdjuntoCorreo>? adjuntos = null)
     {
         var to = para.Where(EsCorreo).Distinct().ToList();
         var copia = cc.Where(EsCorreo).Distinct().ToList();
@@ -65,11 +70,12 @@ public class ServicioCorreo : IServicioCorreo
         if (to.Count + copia.Count + oculta.Count == 0) return (false, "There are no recipients configured");
         if (!Configurado) return (false, "Email is not configured on the server (set SMTP_HOST/SMTP_USER/SMTP_PASS/MAIL_FROM or RESEND_API_KEY)");
 
+        var lista = adjuntos?.ToList();
         try
         {
             if (!string.IsNullOrWhiteSpace(_resendKey))
-                return await EnviarPorResendAsync(to, copia, oculta, asunto, html, textoPlano, ct);
-            return await EnviarPorSmtpAsync(to, copia, oculta, asunto, html, textoPlano, ct);
+                return await EnviarPorResendAsync(to, copia, oculta, asunto, html, textoPlano, lista, ct);
+            return await EnviarPorSmtpAsync(to, copia, oculta, asunto, html, textoPlano, lista, ct);
         }
         catch (Exception ex)
         {
@@ -80,7 +86,7 @@ public class ServicioCorreo : IServicioCorreo
 
     // ------------------------------------------------------------------
     private async Task<(bool, string?)> EnviarPorSmtpAsync(List<string> to, List<string> cc, List<string> cco,
-        string asunto, string html, string texto, CancellationToken ct)
+        string asunto, string html, string texto, List<AdjuntoCorreo>? adjuntos, CancellationToken ct)
     {
         using var mensaje = new MailMessage
         {
@@ -96,6 +102,9 @@ public class ServicioCorreo : IServicioCorreo
         foreach (var x in to) mensaje.To.Add(x);
         foreach (var x in cc) mensaje.CC.Add(x);
         foreach (var x in cco) mensaje.Bcc.Add(x);
+        if (adjuntos != null)
+            foreach (var a in adjuntos)
+                mensaje.Attachments.Add(new Attachment(new MemoryStream(a.Contenido), a.Nombre, a.TipoMime));
 
         using var cliente = new SmtpClient(_host, _puerto)
         {
@@ -111,7 +120,7 @@ public class ServicioCorreo : IServicioCorreo
 
     // ------------------------------------------------------------------
     private async Task<(bool, string?)> EnviarPorResendAsync(List<string> to, List<string> cc, List<string> cco,
-        string asunto, string html, string texto, CancellationToken ct)
+        string asunto, string html, string texto, List<AdjuntoCorreo>? adjuntos, CancellationToken ct)
     {
         var cuerpo = new Dictionary<string, object?>
         {
@@ -123,6 +132,8 @@ public class ServicioCorreo : IServicioCorreo
         };
         if (cc.Count > 0) cuerpo["cc"] = cc;
         if (cco.Count > 0) cuerpo["bcc"] = cco;
+        if (adjuntos != null && adjuntos.Count > 0)
+            cuerpo["attachments"] = adjuntos.Select(a => new { filename = a.Nombre, content = Convert.ToBase64String(a.Contenido) }).ToList();
 
         var cliente = _http.CreateClient();
         cliente.Timeout = TimeSpan.FromSeconds(30);

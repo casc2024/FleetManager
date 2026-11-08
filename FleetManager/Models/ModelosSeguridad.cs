@@ -40,6 +40,33 @@ public class LoginRequest
     public string? Password { get; set; }
 }
 
+/// <summary>A person the quote email can be sent to (recipients maintainer).</summary>
+public class Recipient
+{
+    public long IdRecipient { get; set; }
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public bool IsActive { get; set; } = true;
+}
+
+public class RecipientRequest
+{
+    public long? IdRecipient { get; set; }
+    public string? Name { get; set; }
+    public string? Email { get; set; }
+}
+
+/// <summary>Send the current quote proposal by email to a saved recipient.</summary>
+public class QuoteEmailRequest
+{
+    public long? RecipientId { get; set; }
+    public string? Subject { get; set; }
+    public string? Html { get; set; }
+    /// <summary>The proposal rendered as a PDF by the browser, base64-encoded (optional).</summary>
+    public string? PdfBase64 { get; set; }
+    public string? PdfName { get; set; }
+}
+
 /// <summary>Who is signed in, for the top menu and to lock the audit identity.</summary>
 public class SessionUser
 {

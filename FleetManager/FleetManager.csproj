@@ -12,4 +12,9 @@
     <PackageReference Include="Npgsql" Version="8.0.5" />
   </ItemGroup>
 
+  <!-- JCK Sand Pit quoter (served behind auth by CotizadorController, not from wwwroot) -->
+  <ItemGroup>
+    <Content Include="Quoter\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

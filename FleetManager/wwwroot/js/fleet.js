@@ -200,9 +200,19 @@
     if (rows.some((r) => r.numeroEquipo === old)) el.value = old;
   }
   function wireAdmin() {
+    // Reject strange characters (mirrors the server rules).
+    const RE_EQUIP = /^[A-Za-z0-9][A-Za-z0-9\-]{0,39}$/;
+    const RE_PLANT = /^[A-Za-z0-9][A-Za-z0-9 \-]{0,39}$/;
+    const RE_DRIVER = /^\p{L}[\p{L} .'\-]{0,119}$/u;
+
     $("addEntity").onclick = async () => {
       const type = $("addType").value, number = $("addNumber").value.trim();
       if (!number) return toast("Enter equipment number or driver name", true);
+      if (type === "DRIVER") {
+        if (!RE_DRIVER.test(number)) return toast("Driver name: only letters, spaces, hyphen, apostrophe and dot.", true);
+      } else if (!RE_EQUIP.test(number)) {
+        return toast("Equipment number: only letters, numbers and hyphen.", true);
+      }
       const r = type === "DRIVER"
         ? await api("/api/conductor/agregar", { nombre: number })
         : await api("/api/equipo/agregar", { numeroEquipo: number, grupo: type });
@@ -220,6 +230,7 @@
     $("addPlant").onclick = async () => {
       const v = $("plantName").value.trim();
       if (!v) return;
+      if (!RE_PLANT.test(v)) return toast("Plant code: only letters, numbers, spaces and hyphen.", true);
       const { ok, data } = await api("/api/planta/agregar", { codigo: v });
       if (ok) { $("plantName").value = ""; toast("Plant added."); await loadAll(); }
       else toast((data && data.mensaje) || "Could not add plant.", true);

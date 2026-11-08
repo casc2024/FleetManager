@@ -16,4 +16,12 @@ public interface ISeguridadRepositorio
     Task<Resultado> ActualizarUsuarioAsync(AppUserRequest req, string usuario, string? ip, CancellationToken ct = default);
     /// <summary>Soft delete (is_active = false). <paramref name="idActual"/> is the signed-in user, who cannot delete themselves.</summary>
     Task<Resultado> EliminarUsuarioAsync(long idUser, long idActual, string usuario, string? ip, CancellationToken ct = default);
+
+    // Email recipients (personnel maintainer)
+    Task<List<Recipient>> ListarDestinatariosAsync(CancellationToken ct = default);
+    Task<Resultado> CrearDestinatarioAsync(RecipientRequest req, string usuario, string? ip, CancellationToken ct = default);
+    Task<Resultado> ActualizarDestinatarioAsync(RecipientRequest req, string usuario, string? ip, CancellationToken ct = default);
+    Task<Resultado> EliminarDestinatarioAsync(long idRecipient, string usuario, string? ip, CancellationToken ct = default);
+    /// <summary>Returns the recipient's email, or null when not found / inactive.</summary>
+    Task<string?> ObtenerDestinatarioEmailAsync(long idRecipient, CancellationToken ct = default);
 }

@@ -1,0 +1,73 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17324d">
+<meta name="robots" content="noindex">
+<title>Recipients — Fleet Manager</title>
+<link rel="icon" type="image/jpeg" href="~/img/jck-logo.jpg">
+<link rel="apple-touch-icon" href="~/img/jck-logo.jpg">
+<link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/menu.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/users.css" asp-append-version="true">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img class="logo" src="~/img/jck-logo.jpg" alt="JCK" asp-append-version="true">
+    <div><h1>Recipients</h1><small>Email recipients for quotes</small></div>
+  </div>
+</header>
+
+<main>
+<section class="panel">
+  <div class="toolbar">
+    <div><h2 style="margin-bottom:4px">Email recipients</h2><small style="color:var(--muted)">People the quote email can be sent to, shown as a dropdown in the quoter.</small></div>
+    <div class="filters">
+      <input id="search" placeholder="Search name or email">
+      <button class="primary" id="addRecipient">+ Add recipient</button>
+    </div>
+  </div>
+  <div class="table-wrap board">
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>Action</th></tr></thead>
+      <tbody id="recipientsBody"></tbody>
+    </table>
+  </div>
+  <div class="count" id="rowCount"></div>
+</section>
+</main>
+
+<dialog id="recipientDialog" class="modal">
+  <form id="recipientForm" method="dialog" novalidate>
+    <div class="modal-body">
+      <h3 id="dlgTitle">Add recipient</h3>
+      <input type="hidden" id="idRecipient">
+      <div class="form-grid">
+        <div class="col-2">
+          <label for="rname">Name *</label>
+          <input id="rname" maxlength="120" autocomplete="off" required>
+        </div>
+        <div class="col-2">
+          <label for="remail">Email *</label>
+          <input id="remail" type="email" maxlength="160" autocomplete="off" required>
+        </div>
+      </div>
+      <div class="modal-error" id="dlgError" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="dlgCancel">Cancel</button>
+        <button type="submit" class="primary" id="dlgSave">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+<script src="~/js/menu.js" asp-append-version="true"></script>
+<script src="~/js/destinatarios.js" asp-append-version="true"></script>
+</body>
+</html>
