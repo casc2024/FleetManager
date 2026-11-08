@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#12233f">
-  <meta name="description" content="Cotizaciones de materiales, transporte y RFP para JCK Sand Pit.">
-  <title>JCK Sand Pit | Cotizador</title>
+  <meta name="description" content="Materials, transport and RFP quotes for JCK Sand Pit.">
+  <title>JCK Sand Pit | Quoter</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -23,57 +23,57 @@
 <body>
 <div class="app-shell" id="appShell">
   <header class="topbar">
-    <div class="brand"><div class="brand-mark">J</div><div><div class="brand-name">JCK SAND PIT</div><div class="brand-sub">Cotizaciones de materiales y transporte</div></div></div>
-    <div class="top-actions"><button id="historyBtn">Historial <span id="historyCount">0</span></button><button id="settingsBtn">Tarifas y ajustes</button><button id="newQuoteBtn">Nueva cotización</button><button class="primary" id="saveDraftBtn">Guardar borrador</button></div>
+    <div class="brand"><div class="brand-mark">J</div><div><div class="brand-name">JCK SAND PIT</div><div class="brand-sub">Materials and transport quotes</div></div></div>
+    <div class="top-actions"><button id="historyBtn">History <span id="historyCount">0</span></button><button id="settingsBtn">Rates and settings</button><button id="newQuoteBtn">New quote</button><button class="primary" id="saveDraftBtn">Save draft</button></div>
   </header>
   <main class="wrap">
-    <section class="intro"><div><h1>Presupuesto rápido</h1><p>Complete los datos del proyecto y agregue una línea por material o transporte. Los precios y las cargas se actualizan al cambiar los campos.</p></div><span class="draft-tag">BORRADOR · confirmar tarifas antes de enviar</span></section>
-    <div class="stepper"><span class="step active"><b>1</b> Datos del proyecto</span><span class="step"><b>2</b> Materiales y flete</span><span class="step"><b>3</b> Revisar RFP</span></div>
+    <section class="intro"><div><h1>Quick quote</h1><p>Fill in the project data and add one line per material or transport. Prices and loads update as you change the fields.</p></div><span class="draft-tag">DRAFT · confirm rates before sending</span></section>
+    <div class="stepper"><span class="step active"><b>1</b> Project data</span><span class="step"><b>2</b> Materials and freight</span><span class="step"><b>3</b> Review RFP</span></div>
     <section class="card">
-      <div class="card-head"><div><h2>Cliente y condiciones</h2><div class="card-hint">Los campos amarillos son entradas editables.</div></div></div>
+      <div class="card-head"><div><h2>Customer and terms</h2><div class="card-hint">Yellow fields are editable inputs.</div></div></div>
       <div class="grid" id="clientFields">
-        <div class="field input-field"><label>N.º de RFP</label><input data-field="rfp" placeholder="Ej. RFP-2026-014"></div>
-        <div class="field input-field"><label>Nombre legal del cliente *</label><input data-field="customer" placeholder="Nombre de la compañía"></div>
-        <div class="field input-field"><label>Atención / cargo</label><input data-field="attention" placeholder="Contacto"></div>
-        <div class="field input-field"><label>Teléfono</label><input data-field="phone" placeholder="(000) 000-0000"></div>
-        <div class="field input-field"><label>Correo electrónico</label><input data-field="email" type="email" placeholder="nombre@compania.com"></div>
-        <div class="field input-field"><label>Condiciones de pago</label><select data-field="terms"></select></div>
-        <div class="field input-field"><label>Dirección de facturación</label><input data-field="billing" placeholder="Calle, ciudad, estado y ZIP"></div>
-        <div class="field"><label>Requisito de crédito</label><input data-field="credit" readonly></div>
+        <div class="field input-field"><label>RFP #</label><input data-field="rfp" placeholder="E.g. RFP-2026-014"></div>
+        <div class="field input-field"><label>Customer legal name *</label><input data-field="customer" placeholder="Company name"></div>
+        <div class="field input-field"><label>Attn / title</label><input data-field="attention" placeholder="Contact"></div>
+        <div class="field input-field"><label>Phone</label><input data-field="phone" placeholder="(000) 000-0000"></div>
+        <div class="field input-field"><label>Email</label><input data-field="email" type="email" placeholder="name@company.com"></div>
+        <div class="field input-field"><label>Payment terms</label><select data-field="terms"></select></div>
+        <div class="field input-field"><label>Billing address</label><input data-field="billing" placeholder="Street, city, state and ZIP"></div>
+        <div class="field"><label>Credit requirement</label><input data-field="credit" readonly></div>
       </div>
       <div class="payment-note" id="paymentNote"></div>
     </section>
     <section class="card">
-      <div class="card-head"><div><h2>Proyecto y entrega</h2><div class="card-hint">Use millas de ida. El periodo puede indicarse por día o por semana.</div></div></div>
+      <div class="card-head"><div><h2>Project and delivery</h2><div class="card-hint">Use one-way miles. The period can be given per day or per week.</div></div></div>
       <div class="grid project">
-        <div class="field input-field"><label>Nombre del proyecto *</label><input data-field="project" placeholder="Ej. Sunnyvale Phase 2"></div>
-        <div class="field input-field wide"><label>Dirección del proyecto / entrega</label><input data-field="deliveryAddress" placeholder="Dirección de obra"></div>
-        <div class="field input-field"><label>Contratista general</label><input data-field="generalContractor"></div>
-        <div class="field input-field"><label>Propietario del proyecto</label><input data-field="owner"></div>
-        <div class="field input-field"><label>Contacto de obra / teléfono</label><input data-field="siteContact"></div>
-        <div class="field input-field"><label>Fecha de inicio</label><input data-field="startDate" type="date"></div>
-        <div class="field input-field"><label>Duración estimada (días hábiles)</label><input data-field="duration" type="number" min="1" step="1" placeholder="Opcional"></div>
+        <div class="field input-field"><label>Project name *</label><input data-field="project" placeholder="E.g. Sunnyvale Phase 2"></div>
+        <div class="field input-field wide"><label>Project / delivery address</label><input data-field="deliveryAddress" placeholder="Jobsite address"></div>
+        <div class="field input-field"><label>General contractor</label><input data-field="generalContractor"></div>
+        <div class="field input-field"><label>Project owner</label><input data-field="owner"></div>
+        <div class="field input-field"><label>Site contact / phone</label><input data-field="siteContact"></div>
+        <div class="field input-field"><label>Start date</label><input data-field="startDate" type="date"></div>
+        <div class="field input-field"><label>Estimated duration (business days)</label><input data-field="duration" type="number" min="1" step="1" placeholder="Optional"></div>
       </div>
     </section>
     <section class="card">
-      <div class="card-head"><div><h2>Líneas de cotización</h2><div class="card-hint">FOB origen: el cliente recoge el material. FOB destino: JCK entrega en el proyecto.</div></div></div>
+      <div class="card-head"><div><h2>Quote lines</h2><div class="card-hint">FOB Origin: the customer picks up the material. FOB Destination: JCK delivers at the project.</div></div></div>
       <div id="lines" class="lines-wrap"></div>
-      <button class="add-line" id="addLineBtn">＋ Añadir material o transporte</button>
+      <button class="add-line" id="addLineBtn">＋ Add material or transport</button>
     </section>
     <section class="card">
-      <div class="card-head"><div><h2>Resumen</h2><div class="card-hint">Revise precio final, camiones requeridos y alertas antes de preparar la propuesta.</div></div></div>
+      <div class="card-head"><div><h2>Summary</h2><div class="card-hint">Review final price, required trucks and alerts before preparing the proposal.</div></div></div>
       <div class="summary" id="summary"></div>
       <ul class="alert-list" id="alerts"></ul>
-      <div class="summary-actions"><button class="btn" id="resetBtn">Limpiar formulario</button><button class="btn primary" id="rfpBtn">Revisar propuesta RFP →</button></div>
+      <div class="summary-actions"><button class="btn" id="resetBtn">Clear form</button><button class="btn primary" id="rfpBtn">Review RFP proposal →</button></div>
     </section>
-    <div class="data-note"><strong>Datos para revisión:</strong> tarifas y costos trasladados del libro de trabajo, último corte de información 6 nov. 2026. El promedio de combustible usa datos hasta 26 oct. 2026. Precios, impuestos y costos de camión pueden cambiar; confirme cotizaciones vigentes.</div>
+    <div class="data-note"><strong>Data for review:</strong> rates and costs carried over from the workbook, last data cutoff Nov 6, 2026. The fuel average uses data through Oct 26, 2026. Prices, taxes and truck costs may change; confirm current quotes.</div>
   </main>
 </div>
-<div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-label="Tarifas y ajustes">
-  <div class="modal"><div class="modal-head"><div><h2>Tarifas y ajustes</h2><div class="card-hint">Cambios guardados en este navegador.</div></div><button class="btn" id="closeSettings">Cerrar</button></div><div class="modal-body" id="settingsBody"></div></div>
+<div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-label="Rates and settings">
+  <div class="modal"><div class="modal-head"><div><h2>Rates and settings</h2><div class="card-hint">Changes saved in this browser.</div></div><button class="btn" id="closeSettings">Close</button></div><div class="modal-body" id="settingsBody"></div></div>
 </div>
-<div class="modal-backdrop" id="historyModal" role="dialog" aria-modal="true" aria-label="Historial de cotizaciones"><section class="modal history-modal"><div class="modal-head"><div><h2>Historial de cotizaciones</h2><div class="card-hint">Se guarda solo en este navegador; no se comparte ni sincroniza con otros usuarios.</div></div><button class="btn" id="closeHistory">Cerrar</button></div><div class="modal-body"><div class="history-toolbar"><button class="btn primary" id="exportHistory">Exportar a Excel (.xlsx)</button></div><div id="historySummary"></div><div class="history-note">Los porcentajes de aprobación se calculan sobre las cotizaciones enviadas. Los PDF preparados pero aún no enviados se muestran aparte.</div><div id="historyList" class="history-list"></div></div></section></div>
-<div class="rfp-screen" id="rfpScreen"><div class="rfp-toolbar"><button class="btn" id="backBtn">← Volver al presupuesto</button><div><button class="btn gold" id="outlookBtn">Enviar por Outlook</button><button class="btn" id="registerSentBtn">Registrar como enviada</button><button class="btn primary" id="printBtn">Guardar como PDF / Imprimir</button></div></div><div class="history-note" style="max-width:980px;margin:0 auto 10px">Outlook abrirá un borrador y el PDF para imprimir/guardar; adjunte el PDF al correo y confirme el envío en el historial.</div><article class="rfp-paper" id="rfpPaper"></article></div>
+<div class="modal-backdrop" id="historyModal" role="dialog" aria-modal="true" aria-label="Quote history"><section class="modal history-modal"><div class="modal-head"><div><h2>Quote history</h2><div class="card-hint">Saved only in this browser; not shared or synced with other users.</div></div><button class="btn" id="closeHistory">Close</button></div><div class="modal-body"><div class="history-toolbar"><button class="btn primary" id="exportHistory">Export to Excel (.xlsx)</button></div><div id="historySummary"></div><div class="history-note">Approval percentages are calculated on sent quotes. PDFs prepared but not yet sent are shown separately.</div><div id="historyList" class="history-list"></div></div></section></div>
+<div class="rfp-screen" id="rfpScreen"><div class="rfp-toolbar"><button class="btn" id="backBtn">← Back to quote</button><div><button class="btn" id="registerSentBtn">Register as sent</button><button class="btn primary" id="downloadPdfBtn">Download PDF</button></div></div><article class="rfp-paper" id="rfpPaper"></article></div>
 <script src="./data.js"></script>
 <script src="./app.js"></script>
 <script src="/js/menu.js"></script>

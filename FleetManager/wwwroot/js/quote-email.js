@@ -12,7 +12,7 @@
   const bar = document.createElement("div");
   bar.id = "jckEmailBar";
   bar.innerHTML = `
-    <strong>Email quote</strong>
+    <div class="jck-head"><strong>Email quote</strong><button type="button" id="jckEmailHide" title="Hide" aria-label="Hide">✕</button></div>
     <div class="jck-grp">
       <span class="jck-lbl">To</span>
       <div class="jck-chips" id="jckToChips"></div>
@@ -51,8 +51,30 @@
     #jckEmailBar .jck-manage{color:#bcd0ea;font-size:12px;text-decoration:underline;align-self:center}
     #jckEmailMsg{font-size:13px;align-self:center}
     #jckEmailMsg.ok{color:#8fe3b0}#jckEmailMsg.err{color:#ffb4ab}
+    #jckEmailBar .jck-head{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;gap:10px}
+    #jckEmailBar #jckEmailHide{border:0;background:#ffffff22;color:#fff;border-radius:7px;width:26px;height:26px;cursor:pointer;font-size:13px;line-height:1;padding:0}
+    #jckEmailBar #jckEmailHide:hover{background:#ffffff38}
+    #jckEmailLauncher{position:fixed;right:14px;bottom:14px;z-index:3000;border:0;border-radius:999px;padding:11px 17px;background:#e7a14b;color:#12233f;font:700 14px 'DM Sans',Segoe UI,sans-serif;box-shadow:0 10px 28px rgba(0,0,0,.28);cursor:pointer}
+    #jckEmailLauncher:hover{background:#edac5e}
     @media(max-width:700px){#jckEmailBar{left:8px;right:8px;transform:none;max-width:none}#jckEmailBar .jck-grp{flex:1 1 100%}}`;
   document.head.appendChild(style);
+
+  // Collapsible: a launcher pill shows/hides the email bar; the choice is remembered.
+  const launcher = document.createElement("button");
+  launcher.id = "jckEmailLauncher";
+  launcher.type = "button";
+  launcher.textContent = "✉ Email quote";
+  document.body.appendChild(launcher);
+  function setOpen(open) {
+    bar.style.display = open ? "flex" : "none";
+    launcher.style.display = open ? "none" : "block";
+    try { localStorage.setItem("jck_email_open", open ? "1" : "0"); } catch (e) {}
+  }
+  let startOpen = false;
+  try { startOpen = localStorage.getItem("jck_email_open") === "1"; } catch (e) {}
+  setOpen(startOpen);
+  document.getElementById("jckEmailHide").addEventListener("click", () => setOpen(false));
+  launcher.addEventListener("click", () => setOpen(true));
 
   const $ = (id) => document.getElementById(id);
   const msg = (t, cls) => { const m = $("jckEmailMsg"); m.textContent = t; m.className = cls || ""; };
@@ -103,16 +125,42 @@
     return btoa(binary);
   }
 
-  async function makePdf(el) {
+  async function makePdf(srcEl) {
     if (!window.html2pdf) return null;
-    const opt = {
-      margin: [8, 8, 8, 8], image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-      jsPDF: { unit: "mm", format: "letter", orientation: "portrait" },
-      pagebreak: { mode: ["css", "legacy"] }
-    };
-    const buf = await window.html2pdf().set(opt).from(el).outputPdf("arraybuffer");
-    return bufToBase64(buf);
+    // Clone the proposal and normalize it: drop the 1000px min-height, the
+    // centering margin and the shadow so there is no blank band, and give it a
+    // fixed letter-width so html2canvas renders it tightly.
+    const W = 740; // letter content width (px) with 10mm margins
+    const clone = srcEl.cloneNode(true);
+    clone.style.minHeight = "0";
+    clone.style.maxWidth = "none";
+    clone.style.margin = "0";
+    clone.style.boxShadow = "none";
+    clone.style.width = W + "px";
+    clone.style.background = "#fff";
+    // Render in the document flow (top-left), not off-screen with position:fixed,
+    // so html2canvas does not offset the capture origin (blank band / shifted content).
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:absolute;left:0;top:0;width:" + W + "px;background:#fff;z-index:-9999;";
+    wrap.appendChild(clone);
+    document.body.appendChild(wrap);
+    const prevScroll = window.scrollY || window.pageYOffset || 0;
+    window.scrollTo(0, 0);
+    try {
+      const opt = {
+        margin: [10, 10, 12, 10],
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0, x: 0, y: 0, windowWidth: W },
+        jsPDF: { unit: "mm", format: "letter", orientation: "portrait" },
+        // Keep table rows, headers and images from splitting across pages.
+        pagebreak: { mode: ["css", "legacy"], avoid: ["tr", "thead", "tfoot", "img"] }
+      };
+      const buf = await window.html2pdf().set(opt).from(clone).outputPdf("arraybuffer");
+      return bufToBase64(buf);
+    } finally {
+      wrap.remove();
+      window.scrollTo(0, prevScroll);
+    }
   }
 
   async function send() {
