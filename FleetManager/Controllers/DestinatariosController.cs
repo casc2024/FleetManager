@@ -40,16 +40,26 @@ public class DestinatariosController : Controller
     public async Task<IActionResult> Eliminar([FromBody] RecipientRequest req, CancellationToken ct)
         => Responder(await _repo.EliminarDestinatarioAsync(req?.IdRecipient ?? 0, Usuario(), HttpContext.Ip(), ct));
 
-    // POST /api/quote/email -> send the current proposal to a saved recipient
+    // POST /api/quote/email -> send the current proposal to saved recipients (To + CC)
     [HttpPost("/api/quote/email")]
     public async Task<IActionResult> EnviarCotizacion([FromBody] QuoteEmailRequest req, CancellationToken ct)
     {
-        if (req?.RecipientId is not > 0) return BadRequest(Resultado.Mal("Select a recipient."));
+        if (req == null) return BadRequest(Resultado.Mal("Select a recipient."));
         if (!_correo.Configurado)
             return BadRequest(Resultado.Mal("Email is not configured on the server. Set SMTP_HOST/SMTP_USER/SMTP_PASS/MAIL_FROM or RESEND_API_KEY."));
 
-        var email = await _repo.ObtenerDestinatarioEmailAsync(req.RecipientId!.Value, ct);
-        if (email == null) return BadRequest(Resultado.Mal("Recipient not found."));
+        // To ids (accept the list and the legacy single id).
+        var toIds = (req.RecipientIds ?? new()).ToList();
+        if (req.RecipientId is > 0) toIds.Add(req.RecipientId.Value);
+        toIds = toIds.Where(x => x > 0).Distinct().ToList();
+        if (toIds.Count == 0) return BadRequest(Resultado.Mal("Select at least one recipient."));
+
+        // CC ids (never duplicate a To recipient).
+        var ccIds = (req.CcIds ?? new()).Where(x => x > 0 && !toIds.Contains(x)).Distinct().ToList();
+
+        var to = await ResolverCorreosAsync(toIds, ct);
+        if (to.Count == 0) return BadRequest(Resultado.Mal("Recipient not found."));
+        var cc = await ResolverCorreosAsync(ccIds, ct);
 
         var asunto = string.IsNullOrWhiteSpace(req.Subject) ? "JCK Sand Pit — Quote" : req.Subject!.Trim();
         var html = string.IsNullOrWhiteSpace(req.Html) ? "<p>Quote attached.</p>" : req.Html!;
@@ -70,11 +80,22 @@ public class DestinatariosController : Controller
             catch (FormatException) { return BadRequest(Resultado.Mal("The attached PDF could not be read.")); }
         }
 
-        var (ok, error) = await _correo.EnviarAsync(new[] { email }, Array.Empty<string>(), Array.Empty<string>(),
+        var (ok, error) = await _correo.EnviarAsync(to, cc, Array.Empty<string>(),
             asunto, html, texto, ct, adjuntos);
         return ok
-            ? Json(Resultado.Bien($"Email sent to {email}."))
+            ? Json(Resultado.Bien($"Email sent to {string.Join(", ", to)}" + (cc.Count > 0 ? $" (cc: {string.Join(", ", cc)})" : "") + "."))
             : BadRequest(Resultado.Mal(error ?? "Could not send the email."));
+    }
+
+    private async Task<List<string>> ResolverCorreosAsync(List<long> ids, CancellationToken ct)
+    {
+        var correos = new List<string>();
+        foreach (var id in ids)
+        {
+            var e = await _repo.ObtenerDestinatarioEmailAsync(id, ct);
+            if (e != null) correos.Add(e);
+        }
+        return correos;
     }
 
     private IActionResult Responder(Resultado r) => r.Ok ? Json(r) : BadRequest(r);

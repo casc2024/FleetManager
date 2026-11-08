@@ -59,6 +59,11 @@ public class RecipientRequest
 /// <summary>Send the current quote proposal by email to a saved recipient.</summary>
 public class QuoteEmailRequest
 {
+    /// <summary>Primary recipients (To). Several allowed.</summary>
+    public List<long>? RecipientIds { get; set; }
+    /// <summary>Carbon-copy recipients (CC). Optional.</summary>
+    public List<long>? CcIds { get; set; }
+    /// <summary>Kept for backward compatibility (single To recipient).</summary>
     public long? RecipientId { get; set; }
     public string? Subject { get; set; }
     public string? Html { get; set; }
