@@ -19,7 +19,8 @@ public static class IdentidadApp
             Username = user.FindFirst(ClaimTypes.Name)?.Value ?? "",
             Name = user.FindFirst("FullName")?.Value ?? "",
             Email = user.FindFirst(ClaimTypes.Email)?.Value ?? "",
-            IsAdmin = user.IsInRole(RolAdmin)
+            IsAdmin = user.IsInRole(RolAdmin),
+            CanQuotes = user.IsInRole(RolAdmin) || user.HasClaim("perm", "quotes")
         };
     }
 
@@ -31,12 +32,18 @@ public static class IdentidadApp
         return ip.ToString();
     }
 
-    public static List<Claim> Claims(AppUser u) => new()
+    public static List<Claim> Claims(AppUser u)
     {
-        new(ClaimTypes.NameIdentifier, u.IdUser.ToString()),
-        new(ClaimTypes.Name, u.Username),
-        new("FullName", $"{u.FirstName} {u.LastName}".Trim()),
-        new(ClaimTypes.Email, u.Email),
-        new(ClaimTypes.Role, u.IsAdmin ? RolAdmin : "User")
-    };
+        var list = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, u.IdUser.ToString()),
+            new(ClaimTypes.Name, u.Username),
+            new("FullName", $"{u.FirstName} {u.LastName}".Trim()),
+            new(ClaimTypes.Email, u.Email),
+            new(ClaimTypes.Role, u.IsAdmin ? RolAdmin : "User")
+        };
+        // Per-module permission: lets a non-admin reach the Quotes module.
+        if (u.CanQuotes) list.Add(new("perm", "quotes"));
+        return list;
+    }
 }

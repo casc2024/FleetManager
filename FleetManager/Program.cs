@@ -40,7 +40,12 @@ builder.Services
             ctx.Response.Redirect(ctx.RedirectUri); return Task.CompletedTask;
         };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(o =>
+{
+    // Quotes module: admins, or non-admins granted the per-module "quotes" permission.
+    o.AddPolicy("Quotes", p => p.RequireAssertion(ctx =>
+        ctx.User.IsInRole(IdentidadApp.RolAdmin) || ctx.User.HasClaim("perm", "quotes")));
+});
 
 // Acceso a datos: siempre PostgreSQL (cadena en appsettings.json o variable DATABASE_URL)
 builder.Services.AddSingleton<IFlotaRepositorio, FlotaRepositorioPostgres>();

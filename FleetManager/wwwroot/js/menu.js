@@ -31,7 +31,7 @@
       ${link("/", "Dashboard")}
       ${me && me.isAdmin ? link("/mixer", "Mixer Fleet") : ""}
       ${me && me.isAdmin ? link("/users", "Users") : ""}
-      ${me && me.isAdmin ? link("/quotes", "Quotes") : ""}
+      ${me && (me.isAdmin || me.canQuotes) ? link("/quotes", "Quotes") : ""}
       ${me && me.isAdmin ? link("/recipients", "Recipients") : ""}
       <div class="sb-who">
         <strong>${esc(me && me.name)}</strong>

@@ -11,6 +11,8 @@ public class AppUser
     public string? Phone { get; set; }
     public string? DocumentNumber { get; set; }
     public bool IsAdmin { get; set; }
+    /// <summary>Non-admin access to the Quotes module (per-module permission).</summary>
+    public bool CanQuotes { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
@@ -29,6 +31,8 @@ public class AppUserRequest
     public string? Phone { get; set; }
     public string? DocumentNumber { get; set; }
     public bool IsAdmin { get; set; }
+    /// <summary>Grants access to the Quotes module without making the user an admin.</summary>
+    public bool CanQuotes { get; set; }
     /// <summary>Required on create; on edit, only changes the password when non-empty.</summary>
     public string? Password { get; set; }
 }
@@ -80,4 +84,6 @@ public class SessionUser
     public string Name { get; set; } = "";
     public string Email { get; set; } = "";
     public bool IsAdmin { get; set; }
+    /// <summary>True for admins or users granted the Quotes module.</summary>
+    public bool CanQuotes { get; set; }
 }

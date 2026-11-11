@@ -9,7 +9,7 @@ namespace FleetManager.Controllers;
 /// app (Quoter/index.html) served behind the auth cookie so only administrators
 /// reach it. It keeps its own state in the browser (localStorage).
 /// </summary>
-[Authorize(Roles = IdentidadApp.RolAdmin)]
+[Authorize(Policy = "Quotes")]
 public class CotizadorController : Controller
 {
     private readonly IWebHostEnvironment _env;

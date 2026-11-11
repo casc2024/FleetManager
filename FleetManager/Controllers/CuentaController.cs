@@ -50,6 +50,6 @@ public class CuentaController : Controller
     public IActionResult Yo()
     {
         var u = User.Usuario();
-        return u == null ? Unauthorized() : Json(new { u.Username, u.Name, u.Email, u.IsAdmin });
+        return u == null ? Unauthorized() : Json(new { u.Username, u.Name, u.Email, u.IsAdmin, u.CanQuotes });
     }
 }

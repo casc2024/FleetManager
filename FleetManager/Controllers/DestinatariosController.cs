@@ -10,7 +10,7 @@ namespace FleetManager.Controllers;
 /// email to a saved recipient. Uses the server's SMTP/Resend configuration
 /// (IServicioCorreo), the same one the mixer report uses.
 /// </summary>
-[Authorize(Roles = IdentidadApp.RolAdmin)]
+[Authorize]
 public class DestinatariosController : Controller
 {
     private readonly ISeguridadRepositorio _repo;
@@ -20,28 +20,34 @@ public class DestinatariosController : Controller
         _repo = repo; _correo = correo;
     }
 
-    // GET /recipients -> maintainer page
+    // GET /recipients -> maintainer page (managing recipients is admin-only)
     [HttpGet("/recipients")]
+    [Authorize(Roles = IdentidadApp.RolAdmin)]
     public IActionResult Index() => View();
 
     // GET /api/recipients -> list (used by the maintainer and by the quoter dropdown)
     [HttpGet("/api/recipients")]
+    [Authorize(Policy = "Quotes")]
     public async Task<IActionResult> Listar(CancellationToken ct) => Json(await _repo.ListarDestinatariosAsync(ct));
 
     [HttpPost("/api/recipients")]
+    [Authorize(Roles = IdentidadApp.RolAdmin)]
     public async Task<IActionResult> Crear([FromBody] RecipientRequest req, CancellationToken ct)
         => Responder(await _repo.CrearDestinatarioAsync(req ?? new(), Usuario(), HttpContext.Ip(), ct));
 
     [HttpPost("/api/recipients/update")]
+    [Authorize(Roles = IdentidadApp.RolAdmin)]
     public async Task<IActionResult> Actualizar([FromBody] RecipientRequest req, CancellationToken ct)
         => Responder(await _repo.ActualizarDestinatarioAsync(req ?? new(), Usuario(), HttpContext.Ip(), ct));
 
     [HttpPost("/api/recipients/delete")]
+    [Authorize(Roles = IdentidadApp.RolAdmin)]
     public async Task<IActionResult> Eliminar([FromBody] RecipientRequest req, CancellationToken ct)
         => Responder(await _repo.EliminarDestinatarioAsync(req?.IdRecipient ?? 0, Usuario(), HttpContext.Ip(), ct));
 
     // POST /api/quote/email -> send the current proposal to saved recipients (To + CC)
     [HttpPost("/api/quote/email")]
+    [Authorize(Policy = "Quotes")]
     public async Task<IActionResult> EnviarCotizacion([FromBody] QuoteEmailRequest req, CancellationToken ct)
     {
         if (req == null) return BadRequest(Resultado.Mal("Select a recipient."));
