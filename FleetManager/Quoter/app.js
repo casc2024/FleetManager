@@ -74,7 +74,10 @@
         else if(freightLine)costPending=true;
       }else freightCostLoad=billHrs*(+carrier.rate||0);
     }
-    const cost=qty*rawCostUnit+(freightLine&&loads&&!costPending?loads*freightCostLoad:0);
+    // Haul-off "with delivery" (302) rides an existing JCK delivery trip, so its cost is
+    // only the return-load cost (returnLoadCostPct), matching the 60% sell factor (haulOffPct).
+    const freightCostUnit=freightCostLoad*(p.id==='302'?+s.returnLoadCostPct:1);
+    const cost=qty*rawCostUnit+(freightLine&&loads&&!costPending?loads*freightCostUnit:0);
     const preTaxRevenue=extended-taxInUnit*qty;const margin=costPending?null:preTaxRevenue-cost;const marginBase=preTaxRevenue-(p.category==='Purchased'?0:qty*(materialUnit-materialTaxUnit));const marginPct=costPending?null:(marginBase?margin/marginBase:null);
     if(manual&&calculated)flags.push({text:`OVERRIDE ${((finalUnit/calculated-1)*100).toFixed(1)}%`,type:'info'});
     if(costPending)flags.push({text:'COST PENDING · set carrier operating $/hour in Rates & settings',type:'warn'});
