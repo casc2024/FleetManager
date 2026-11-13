@@ -20,7 +20,8 @@ public static class IdentidadApp
             Name = user.FindFirst("FullName")?.Value ?? "",
             Email = user.FindFirst(ClaimTypes.Email)?.Value ?? "",
             IsAdmin = user.IsInRole(RolAdmin),
-            CanQuotes = user.IsInRole(RolAdmin) || user.HasClaim("perm", "quotes")
+            CanQuotes = user.IsInRole(RolAdmin) || user.HasClaim("perm", "quotes"),
+            CanMaterialiq = user.IsInRole(RolAdmin) || user.HasClaim("perm", "materialiq")
         };
     }
 
@@ -42,8 +43,9 @@ public static class IdentidadApp
             new(ClaimTypes.Email, u.Email),
             new(ClaimTypes.Role, u.IsAdmin ? RolAdmin : "User")
         };
-        // Per-module permission: lets a non-admin reach the Quotes module.
+        // Per-module permissions: let a non-admin reach a specific module.
         if (u.CanQuotes) list.Add(new("perm", "quotes"));
+        if (u.CanMaterialiq) list.Add(new("perm", "materialiq"));
         return list;
     }
 }

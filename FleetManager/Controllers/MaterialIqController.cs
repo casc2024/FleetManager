@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FleetManager.Controllers;
 
 /// <summary>MaterialIQ: inventory, demand and supply planning (admin only). Schema "materialiq".</summary>
-[Authorize(Roles = IdentidadApp.RolAdmin)]
+[Authorize(Policy = "MaterialIQ")]
 public class MaterialIqController : Controller
 {
     private readonly IMaterialIqRepositorio _repo;

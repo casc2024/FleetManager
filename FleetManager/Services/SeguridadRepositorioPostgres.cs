@@ -67,7 +67,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
 
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
-            SELECT id_user, username, first_name, last_name, email, phone, document_number, is_admin, can_quotes, password_hash
+            SELECT id_user, username, first_name, last_name, email, phone, document_number, is_admin, can_quotes, can_materialiq, password_hash
             FROM seguridad.app_user
             WHERE lower(username) = lower(@u) AND is_active
             LIMIT 1", cn);
@@ -76,7 +76,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
         await using var rd = await cmd.ExecuteReaderAsync(ct);
         if (!await rd.ReadAsync(ct)) return null;
 
-        var hash = rd.GetString(9);
+        var hash = rd.GetString(10);
         if (!HashContrasena.Verificar(contrasena, hash)) return null;
 
         return new AppUser
@@ -89,7 +89,8 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
             Phone = rd.IsDBNull(5) ? null : rd.GetString(5),
             DocumentNumber = rd.IsDBNull(6) ? null : rd.GetString(6),
             IsAdmin = rd.GetBoolean(7),
-            CanQuotes = rd.GetBoolean(8)
+            CanQuotes = rd.GetBoolean(8),
+            CanMaterialiq = rd.GetBoolean(9)
         };
     }
 
@@ -102,7 +103,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
             SELECT id_user, username, first_name, last_name, email, phone, document_number,
-                   is_admin, is_active, created_at, created_by, updated_at, updated_by, can_quotes
+                   is_admin, is_active, created_at, created_by, updated_at, updated_by, can_quotes, can_materialiq
             FROM seguridad.app_user
             WHERE is_active
             ORDER BY lower(first_name), lower(last_name)", cn);
@@ -123,7 +124,8 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
                 CreatedBy = rd.IsDBNull(10) ? null : rd.GetString(10),
                 UpdatedAt = rd.IsDBNull(11) ? null : rd.GetDateTime(11),
                 UpdatedBy = rd.IsDBNull(12) ? null : rd.GetString(12),
-                CanQuotes = rd.GetBoolean(13)
+                CanQuotes = rd.GetBoolean(13),
+                CanMaterialiq = rd.GetBoolean(14)
             });
         return lista;
     }
@@ -149,8 +151,8 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
 
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO seguridad.app_user
-                (username, first_name, last_name, email, phone, document_number, password_hash, is_admin, can_quotes, is_active)
-            VALUES (@u, @fn, @ln, @e, @ph, @doc, @hash, @adm, @cq, TRUE)
+                (username, first_name, last_name, email, phone, document_number, password_hash, is_admin, can_quotes, can_materialiq, is_active)
+            VALUES (@u, @fn, @ln, @e, @ph, @doc, @hash, @adm, @cq, @cm, TRUE)
             RETURNING id_user", cn, tx);
         cmd.Parameters.AddWithValue("u", user);
         cmd.Parameters.AddWithValue("fn", fn);
@@ -161,6 +163,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
         cmd.Parameters.AddWithValue("hash", hash);
         cmd.Parameters.AddWithValue("adm", req.IsAdmin);
         cmd.Parameters.AddWithValue("cq", req.CanQuotes);
+        cmd.Parameters.AddWithValue("cm", req.CanMaterialiq);
         var id = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
 
         await tx.CommitAsync(ct);
@@ -193,7 +196,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
 
         var sql = @"UPDATE seguridad.app_user
                        SET username = @u, first_name = @fn, last_name = @ln, email = @e,
-                           phone = @ph, document_number = @doc, is_admin = @adm, can_quotes = @cq";
+                           phone = @ph, document_number = @doc, is_admin = @adm, can_quotes = @cq, can_materialiq = @cm";
         var cambiaClave = !string.IsNullOrWhiteSpace(req.Password);
         if (cambiaClave) sql += ", password_hash = @hash";
         sql += " WHERE id_user = @id AND is_active";
@@ -207,6 +210,7 @@ public class SeguridadRepositorioPostgres : ISeguridadRepositorio
         cmd.Parameters.AddWithValue("doc", (object?)doc ?? DBNull.Value);
         cmd.Parameters.AddWithValue("adm", req.IsAdmin);
         cmd.Parameters.AddWithValue("cq", req.CanQuotes);
+        cmd.Parameters.AddWithValue("cm", req.CanMaterialiq);
         cmd.Parameters.AddWithValue("id", req.IdUser.Value);
         if (cambiaClave) cmd.Parameters.AddWithValue("hash", HashContrasena.Crear(req.Password!.Trim()));
         var filas = await cmd.ExecuteNonQueryAsync(ct);

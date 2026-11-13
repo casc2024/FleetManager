@@ -46,7 +46,7 @@
           <td data-label="Email">${esc(u.email)}</td>
           <td data-label="Phone">${esc(u.phone || "—")}</td>
           <td data-label="Document">${esc(u.documentNumber || "—")}</td>
-          <td data-label="Role"><span class="role-pill ${u.isAdmin ? "admin" : "user"}">${u.isAdmin ? "Admin" : "User"}</span>${!u.isAdmin && u.canQuotes ? ' <span class="role-pill quotes">Quotes</span>' : ""}</td>
+          <td data-label="Role"><span class="role-pill ${u.isAdmin ? "admin" : "user"}">${u.isAdmin ? "Admin" : "User"}</span>${!u.isAdmin && u.canQuotes ? ' <span class="role-pill quotes">Quotes</span>' : ""}${!u.isAdmin && u.canMaterialiq ? ' <span class="role-pill quotes">MaterialIQ</span>' : ""}</td>
           <td data-label="Action" class="action"><div class="row-actions">
             <button class="secondary" data-edit="${u.idUser}">Edit</button>
             <button class="danger" data-del="${u.idUser}">Remove</button>
@@ -67,6 +67,7 @@
     $("document").value = user && user.documentNumber ? user.documentNumber : "";
     $("isAdmin").checked = user ? !!user.isAdmin : false;
     $("canQuotes").checked = user ? !!user.canQuotes : false;
+    $("canMaterialiq").checked = user ? !!user.canMaterialiq : false;
     $("password").value = "";
     [$("username"), $("firstName"), $("lastName"), $("uemail"), $("phone"), $("document"), $("password")]
       .forEach((el) => el.classList.remove("invalid"));
@@ -120,6 +121,7 @@
       phone: v.phone || null, documentNumber: v.doc || null,
       isAdmin: $("isAdmin").checked,
       canQuotes: $("canQuotes").checked,
+      canMaterialiq: $("canMaterialiq").checked,
       password: v.pwd || null
     };
     const url = v.isNew ? "/api/users" : "/api/users/update";

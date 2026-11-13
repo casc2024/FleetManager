@@ -45,6 +45,9 @@ builder.Services.AddAuthorization(o =>
     // Quotes module: admins, or non-admins granted the per-module "quotes" permission.
     o.AddPolicy("Quotes", p => p.RequireAssertion(ctx =>
         ctx.User.IsInRole(IdentidadApp.RolAdmin) || ctx.User.HasClaim("perm", "quotes")));
+    // MaterialIQ module: admins, or non-admins granted the per-module "materialiq" permission.
+    o.AddPolicy("MaterialIQ", p => p.RequireAssertion(ctx =>
+        ctx.User.IsInRole(IdentidadApp.RolAdmin) || ctx.User.HasClaim("perm", "materialiq")));
 });
 
 // Acceso a datos: siempre PostgreSQL (cadena en appsettings.json o variable DATABASE_URL)

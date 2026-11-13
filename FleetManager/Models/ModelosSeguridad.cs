@@ -13,6 +13,8 @@ public class AppUser
     public bool IsAdmin { get; set; }
     /// <summary>Non-admin access to the Quotes module (per-module permission).</summary>
     public bool CanQuotes { get; set; }
+    /// <summary>Non-admin access to the MaterialIQ module (per-module permission).</summary>
+    public bool CanMaterialiq { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime? CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
@@ -33,6 +35,8 @@ public class AppUserRequest
     public bool IsAdmin { get; set; }
     /// <summary>Grants access to the Quotes module without making the user an admin.</summary>
     public bool CanQuotes { get; set; }
+    /// <summary>Grants access to the MaterialIQ module without making the user an admin.</summary>
+    public bool CanMaterialiq { get; set; }
     /// <summary>Required on create; on edit, only changes the password when non-empty.</summary>
     public string? Password { get; set; }
 }
@@ -86,4 +90,6 @@ public class SessionUser
     public bool IsAdmin { get; set; }
     /// <summary>True for admins or users granted the Quotes module.</summary>
     public bool CanQuotes { get; set; }
+    /// <summary>True for admins or users granted the MaterialIQ module.</summary>
+    public bool CanMaterialiq { get; set; }
 }
