@@ -1,0 +1,70 @@
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17324d">
+<meta name="robots" content="noindex">
+<title>MaterialIQ — Fleet Manager</title>
+<link rel="icon" type="image/jpeg" href="~/img/jck-logo.jpg">
+<link rel="stylesheet" href="~/css/fleet.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/menu.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/users.css" asp-append-version="true">
+<link rel="stylesheet" href="~/css/materialiq.css" asp-append-version="true">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img class="logo" src="~/img/jck-logo.jpg" alt="JCK" asp-append-version="true">
+    <div><h1>MaterialIQ</h1><small>Inventory · demand · supply</small></div>
+  </div>
+</header>
+
+<main>
+<section class="panel">
+  <div class="toolbar">
+    <div class="filters">
+      <label>Plant <select id="fPlant"><option value="">All plants</option></select></label>
+      <label>Cutoff / planning date <input id="fDate" type="date"></label>
+      <small id="mqStatus" class="mq-status"></small>
+    </div>
+  </div>
+
+  <nav class="mq-tabs" id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="week">7-day supply</button>
+    <button data-tab="demand">Demand</button>
+    <button data-tab="purchases">Purchases</button>
+    <button data-tab="inventory">Inventory</button>
+    <button data-tab="suppliers">Suppliers &amp; rates</button>
+    <button data-tab="charts">Purchase charts</button>
+    <button data-tab="history">History</button>
+    <button data-tab="setup">Setup</button>
+  </nav>
+
+  <div id="view"></div>
+</section>
+</main>
+
+<dialog id="mqDialog" class="modal">
+  <form id="mqForm" method="dialog" novalidate>
+    <div class="modal-body">
+      <h3 id="mqDlgTitle"></h3>
+      <div id="mqDlgFields" class="form-grid"></div>
+      <div class="modal-error" id="mqDlgError" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="mqDlgCancel">Cancel</button>
+        <button type="submit" class="primary" id="mqDlgSave">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast"></div>
+<script src="~/js/menu.js" asp-append-version="true"></script>
+<script src="~/js/materialiq.js" asp-append-version="true"></script>
+</body>
+</html>

@@ -50,6 +50,9 @@ builder.Services.AddAuthorization(o =>
 // Acceso a datos: siempre PostgreSQL (cadena en appsettings.json o variable DATABASE_URL)
 builder.Services.AddSingleton<IFlotaRepositorio, FlotaRepositorioPostgres>();
 
+// MaterialIQ (esquema "materialiq", nuevo): solo lectura en esta versión
+builder.Services.AddSingleton<IMaterialIqRepositorio, MaterialIqRepositorioPostgres>();
+
 // --- NBR Ready Mix: control diario de mezcladoras (esquema "mezcladoras") ---
 builder.Services.AddSingleton<IMezcladorasRepositorio, MezcladorasRepositorioPostgres>();
 builder.Services.AddHttpClient();                                   // para la API de correo (Resend)
@@ -101,6 +104,14 @@ catch (Exception ex)
 {
     app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Seguridad")
        .LogWarning("Módulo de seguridad no disponible ({msg}). Ejecute db/seguridad_esquema.sql en la base.", ex.Message);
+}
+
+// MaterialIQ (esquema "materialiq"): opcional; si no existe, la app igual arranca
+try { await app.Services.GetRequiredService<IMaterialIqRepositorio>().VerificarConexionAsync(); }
+catch (Exception ex)
+{
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MaterialIQ")
+       .LogWarning("Módulo MaterialIQ no disponible ({msg}). Ejecute db/materialiq_esquema.sql en la base.", ex.Message);
 }
 
 app.Run();
