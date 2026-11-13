@@ -1,5 +1,13 @@
 # Fleet Manager — ASP.NET Core MVC (.NET 8) + PostgreSQL
 
+## Modelo de inventario de concreto — MaterialIQ
+
+El módulo `/materialiq` integra inventario valorizado, demanda por planta y SKU,
+planificación de siete días, comparación de proveedores, compras, recepciones,
+consumo, gráficos y auditoría. Antes de ejecutar esta versión, aplique
+`db/materialiq_modelo_concreto.sql` desde la raíz del repositorio.
+Consulte [la instalación, el proceso diario y las fórmulas](docs/MaterialIQ.md).
+
 Réplica funcional del tablero **Fleet Manager** (KPIs, Location Overview, gráficos,
 Fleet Control Board editable, Weekly Snapshots, Recent Activity y Export CSV) con la
 data persistida en PostgreSQL. Responsive: en celular el tablero se muestra como tarjetas.

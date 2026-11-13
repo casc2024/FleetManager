@@ -10,10 +10,12 @@ namespace FleetManager.Controllers;
 public class MaterialIqController : Controller
 {
     private readonly IMaterialIqRepositorio _repo;
-    public MaterialIqController(IMaterialIqRepositorio repo) => _repo = repo;
+    private readonly IWebHostEnvironment _environment;
+    public MaterialIqController(IMaterialIqRepositorio repo,IWebHostEnvironment environment)
+    { _repo = repo; _environment=environment; }
 
     [HttpGet("/materialiq")]
-    public IActionResult Index() => View();
+    public IActionResult Index() => PhysicalFile(Path.Combine(_environment.ContentRootPath,"MaterialIQ","index.html"),"text/html; charset=utf-8");
 
     // ---- reference data ----
     [HttpGet("/api/materialiq/plants")]
@@ -30,6 +32,10 @@ public class MaterialIqController : Controller
 
     [HttpGet("/api/materialiq/rates")]
     public async Task<IActionResult> Tarifas([FromQuery] long? plant, CancellationToken ct) => Json(await _repo.ListarTarifasAsync(plant, ct));
+
+    [HttpGet("/api/materialiq/source")]
+    public async Task<IActionResult> Origen([FromQuery] DateTime? fecha, [FromQuery] long plant, [FromQuery] long material, CancellationToken ct)
+        => Json(await _repo.OrigenAsync((fecha ?? DateTime.Today).Date, plant, material, ct));
 
     // ---- overview ----
     [HttpGet("/api/materialiq/overview")]
@@ -68,12 +74,21 @@ public class MaterialIqController : Controller
             }
             comprasSugeridas += compraUsd;
 
+            // A2 working capital: excess = max(0, stock - seven-day demand - safety); capital = excess x avg cost.
+            // Provisional when any of the next 7 demand days is missing (we flag it as "Incomplete").
+            var avgCost = (f.ValueUsd != null && stock > 0) ? f.ValueUsd.Value / stock : (decimal?)null;
+            var dem7 = f.Demand7Tons;
+            var exceso = Math.Max(0m, stock - dem7 - f.SafetyTons);
+            var capital = (avgCost != null) ? exceso * avgCost.Value : (decimal?)null;
+
             detalle.Add(new
             {
                 f.IdPlant, f.Plant, f.IdMaterial, f.MatNumber, f.Material, f.Unit,
                 stock = f.StockTons, valor = f.ValueUsd, demanda = f.DemandTomorrow,
+                costoPromedio = avgCost, capacidadMax = f.MaxCapacityTons, fechaCierre = f.BalanceDate?.ToString("yyyy-MM-dd"),
+                exceso, capital, planCompleto = f.Demand7Pending == 0,
                 seguridad = f.SafetyTons, lote = f.LotTons, llegadas = f.InboundTons,
-                tarifa = f.BestRateT, cobertura, diasEq, bajoStock,
+                tarifa = f.BestRateT, tarifaProd = f.BestProductT, tarifaFreight = f.BestFreightT, tarifaApproved = f.BestRateApproved, cobertura, diasEq, bajoStock,
                 comprarTn = compraTn, comprarUsd = compraUsd,
                 estado = demanda == null ? "pending" : bajoStock ? "low" : "ok"
             });
@@ -105,14 +120,18 @@ public class MaterialIqController : Controller
         => Json(await _repo.ListarComprasAsync((desde ?? DateTime.Today.AddDays(-30)).Date, (hasta ?? DateTime.Today).Date, plant, ct));
 
     [HttpGet("/api/materialiq/charts")]
-    public async Task<IActionResult> Charts([FromQuery] DateTime? desde, [FromQuery] DateTime? hasta, [FromQuery] long? plant, [FromQuery] string? modo, CancellationToken ct)
-        => Json(await _repo.ChartsAsync((desde ?? DateTime.Today.AddDays(-30)).Date, (hasta ?? DateTime.Today).Date, plant, modo ?? "received", ct));
+    public async Task<IActionResult> Charts([FromQuery] DateTime? desde, [FromQuery] DateTime? hasta, [FromQuery] long? plant, [FromQuery] long? material, [FromQuery] string? modo, CancellationToken ct)
+        => Json(await _repo.ChartsAsync((desde ?? DateTime.Today.AddDays(-30)).Date, (hasta ?? DateTime.Today).Date, plant, modo ?? "received", material, ct));
 
     [HttpGet("/api/materialiq/history")]
     public async Task<IActionResult> Historial([FromQuery] DateTime? desde, [FromQuery] DateTime? hasta, [FromQuery] string? entity, CancellationToken ct)
         => Json(await _repo.ListarHistorialAsync((desde ?? DateTime.Today.AddDays(-30)).Date, (hasta ?? DateTime.Today).Date, entity, ct));
 
     // ---- writes ----
+    [HttpPost("/api/materialiq/selection")]
+    public async Task<IActionResult> Seleccionar([FromBody] MqSeleccionReq req, CancellationToken ct)
+        => R(await _repo.GuardarSeleccionAsync(req, U(), HttpContext.Ip(), ct));
+
     [HttpPost("/api/materialiq/demand")]
     public async Task<IActionResult> GuardarDemanda([FromBody] MqDemandaReq req, CancellationToken ct)
         => R(await _repo.GuardarDemandaAsync(req ?? new(), U(), HttpContext.Ip(), ct));

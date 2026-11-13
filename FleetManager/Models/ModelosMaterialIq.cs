@@ -24,11 +24,23 @@ public class MqFila
     /// <summary>Confirmed demand for tomorrow (null = pending, not zero).</summary>
     public decimal? DemandTomorrow { get; set; }
     public decimal SafetyTons { get; set; }
+    public decimal? MaxCapacityTons { get; set; }
     public decimal LotTons { get; set; }
+    /// <summary>Date of the closing balance that stock/value were replayed from (null if none).</summary>
+    public DateTime? BalanceDate { get; set; }
+    /// <summary>Confirmed demand over the next 7 days (sum of entered days).</summary>
+    public decimal Demand7Tons { get; set; }
+    /// <summary>Number of the next 7 days still pending (no demand entered).</summary>
+    public int Demand7Pending { get; set; }
     /// <summary>Tons on purchase orders still in transit (not yet physical stock).</summary>
     public decimal InboundTons { get; set; }
     /// <summary>Lowest approved delivered rate ($/t = product + freight), null if none.</summary>
     public decimal? BestRateT { get; set; }
+    /// <summary>Product and freight components of that cheapest rate (for the two-tone value bar).</summary>
+    public decimal? BestProductT { get; set; }
+    public decimal? BestFreightT { get; set; }
+    /// <summary>Whether the cheapest effective rate is approved (A2: the reference may use an unapproved rate).</summary>
+    public bool BestRateApproved { get; set; }
 }
 
 /// <summary>Cards at the top of the overview.</summary>
@@ -97,6 +109,7 @@ public class MqConsumoReq
 
 public class MqPoliticaReq
 {
+    public long? AssignedSupplierId { get; set; }
     public long IdPlant { get; set; }
     public long IdMaterial { get; set; }
     public decimal SafetyStockT { get; set; }

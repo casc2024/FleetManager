@@ -18,8 +18,10 @@ public interface IMaterialIqRepositorio
     Task<object> ListarComprasAsync(DateTime desde, DateTime hasta, long? plantId, CancellationToken ct = default);
     Task<object> ListarTarifasAsync(long? plantId, CancellationToken ct = default);
     Task<object> ListarPoliticasAsync(long? plantId, CancellationToken ct = default);
-    Task<object> ChartsAsync(DateTime desde, DateTime hasta, long? plantId, string modo, CancellationToken ct = default);
+    Task<object> ChartsAsync(DateTime desde, DateTime hasta, long? plantId, string modo, long? materialId = null, CancellationToken ct = default);
     Task<object> ListarHistorialAsync(DateTime desde, DateTime hasta, string? entity, CancellationToken ct = default);
+    Task<Resultado> GuardarSeleccionAsync(MqSeleccionReq req, string usuario, string? ip, CancellationToken ct = default);
+    Task<object> OrigenAsync(DateTime cutoff, long plant, long material, CancellationToken ct = default);
     // Writes (audited)
     Task<Resultado> GuardarDemandaAsync(MqDemandaReq req, string usuario, string? ip, CancellationToken ct = default);
     Task<Resultado> CrearCompraAsync(MqCompraReq req, string usuario, string? ip, CancellationToken ct = default);
@@ -43,7 +45,7 @@ public interface IMaterialIqRepositorio
 /// writes fleet / seguridad / mezcladoras. Every mutation is logged to
 /// materialiq.change_log with the signed-in user and client IP.
 /// </summary>
-public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
+public partial class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 {
     private readonly string _cadena;
     public MaterialIqRepositorioPostgres(IConfiguration config)
@@ -74,6 +76,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
     private static async Task LogAsync(NpgsqlConnection cn, NpgsqlTransaction tx, string entity, long? entityId,
         string action, string? field, string? oldV, string? newV, string? reason, string usuario, string? ip, CancellationToken ct)
     {
+        if (entity != "plan_selection") return; // Business tables are audited transactionally by the database trigger.
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.change_log (entity, entity_id, action, field, old_value, new_value, reason, changed_by, changed_ip)
             VALUES (@e, @id, @a, @f, @o, @n, @r, @u, NULLIF(@ip,'')::inet)", cn, tx);
@@ -132,7 +135,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
     // Weighted-average stock + value per plant/material at the cutoff.
     // Latest closing balance resets stock/value; received purchases and
     // consumption dated after it are replayed in date order (receipt first).
-    private async Task<Dictionary<(long, long), (decimal Q, decimal? V)>> CalcularStockAsync(
+    private async Task<Dictionary<(long, long), (decimal Q, decimal? V, DateTime? Date)>> CalcularStockAsync(
         NpgsqlConnection cn, DateTime corte, long? plantId, CancellationToken ct)
     {
         var baseBal = new Dictionary<(long, long), (DateTime date, decimal q, decimal? v)>();
@@ -180,33 +183,24 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
                 Add((rd.GetInt64(0), rd.GetInt64(1)), rd.GetDateTime(2), false, rd.GetDecimal(3), 0m);
         }
 
-        var result = new Dictionary<(long, long), (decimal, decimal?)>();
+        var result = new Dictionary<(long, long), (decimal, decimal?, DateTime?)>();
         var keys = new HashSet<(long, long)>(baseBal.Keys);
         foreach (var k in mov.Keys) keys.Add(k);
         foreach (var k in keys)
         {
-            DateTime d0 = DateTime.MinValue; decimal q = 0; decimal? v = 0; bool unknown = false;
-            if (baseBal.TryGetValue(k, out var b)) { d0 = b.date; q = b.q; v = b.v; unknown = (b.v == null && b.q > 0); }
+            DateTime d0 = DateTime.MinValue; DateTime? baseDate = null; decimal q = 0; decimal? v = 0; bool unknown = false;
+            if (baseBal.TryGetValue(k, out var b)) { d0 = b.date; baseDate = b.date; q = b.q; v = b.q == 0 ? 0 : b.v; unknown = (v == null); }
             if (mov.TryGetValue(k, out var list))
             {
                 // date asc; receipts before usage on the same day; only strictly after the base date
                 foreach (var m in list.Where(x => x.date > d0)
                                        .OrderBy(x => x.date).ThenByDescending(x => x.receipt))
                 {
-                    if (m.receipt)
-                    {
-                        q += m.tons;
-                        if (!unknown && v != null) v += m.tons * m.unit;
-                    }
-                    else if (q > 0)
-                    {
-                        var u = Math.Min(m.tons, q);
-                        if (!unknown && v != null) v = v.Value * (1 - u / q);
-                        q -= u;
-                    }
+                    (q, v) = CalculoInventario.Movimiento(q, unknown ? null : v, m.receipt, m.tons, m.unit);
+                    unknown = v == null;
                 }
             }
-            result[k] = (q, unknown ? (decimal?)null : v);
+            result[k] = (q, unknown ? (decimal?)null : v, baseDate);
         }
         return result;
     }
@@ -219,7 +213,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         var inbound = new Dictionary<(long, long), decimal>();
         await using (var cmd = new NpgsqlCommand(@"
             SELECT id_plant, id_material, SUM(tons) FROM materialiq.purchase
-            WHERE status = 'In transit' AND purchase_date <= @c AND (@p::bigint IS NULL OR id_plant = @p)
+            WHERE status = 'In transit' AND purchase_date <= @c AND expected_date = @c::date + 1 AND (@p::bigint IS NULL OR id_plant = @p)
             GROUP BY id_plant, id_material", cn))
         {
             cmd.Parameters.AddWithValue("c", corte.Date);
@@ -239,22 +233,28 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             while (await rd.ReadAsync(ct)) demanda[(rd.GetInt64(0), rd.GetInt64(1))] = rd.GetDecimal(2);
         }
 
-        var rate = new Dictionary<(long, long), decimal>();
+        // A2: the replacement reference uses the lowest available EFFECTIVE rate for the
+        // matching plant/material; it can still be unapproved (flagged, not excluded).
+        var currentRates = await TarifasVigentesAsync(cn, corte, plantId, ct);
+        var rate = currentRates.ToDictionary(x => x.Key, x => x.Value.OrderBy(r => r.Delivered).ThenBy(r => r.IdSupplier).First());
+
+        // confirmed demand over the next 7 days per plant/material (for working capital and plan status)
+        var dem7 = new Dictionary<(long, long), (decimal sum, int days)>();
         await using (var cmd = new NpgsqlCommand(@"
-            SELECT id_plant, id_material, MIN(product_price_t + freight_t) FROM materialiq.supplier_rate
-            WHERE approved AND effective_date <= @c AND (@p::bigint IS NULL OR id_plant = @p)
+            SELECT id_plant, id_material, SUM(tons), COUNT(*) FROM materialiq.demand
+            WHERE demand_date BETWEEN @c::date + 1 AND @c::date + 7 AND (@p::bigint IS NULL OR id_plant = @p)
             GROUP BY id_plant, id_material", cn))
         {
             cmd.Parameters.AddWithValue("c", corte.Date);
             cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
             await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) rate[(rd.GetInt64(0), rd.GetInt64(1))] = rd.GetDecimal(2);
+            while (await rd.ReadAsync(ct)) dem7[(rd.GetInt64(0), rd.GetInt64(1))] = (rd.GetDecimal(2), (int)rd.GetInt64(3));
         }
 
         var filas = new List<MqFila>();
         await using (var cmd = new NpgsqlCommand(@"
             SELECT pl.id_plant, pl.name, m.id_material, m.mat_number, m.name, m.unit,
-                   pm.safety_stock_t, pm.purchase_lot_t
+                   pm.safety_stock_t, pm.purchase_lot_t, pm.max_capacity_t
             FROM materialiq.plant_material pm
             JOIN materialiq.plant pl ON pl.id_plant = pm.id_plant AND pl.is_active
             JOIN materialiq.material m ON m.id_material = pm.id_material AND m.is_active
@@ -267,17 +267,25 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             {
                 var key = (rd.GetInt64(0), rd.GetInt64(2));
                 stock.TryGetValue(key, out var sv);
+                var capMax = rd.IsDBNull(8) ? (decimal?)null : rd.GetDecimal(8);
                 filas.Add(new MqFila
                 {
                     IdPlant = key.Item1, Plant = rd.GetString(1),
                     IdMaterial = key.Item2, MatNumber = rd.GetString(3), Material = rd.GetString(4), Unit = rd.GetString(5),
                     StockTons = stock.ContainsKey(key) ? sv.Q : 0m,
                     ValueUsd = stock.ContainsKey(key) ? sv.V : null,
+                    BalanceDate = stock.ContainsKey(key) ? sv.Date : null,
+                    MaxCapacityTons = capMax,
+                    Demand7Tons = dem7.TryGetValue(key, out var d7) ? d7.sum : 0m,
+                    Demand7Pending = 7 - (dem7.TryGetValue(key, out var d7b) ? d7b.days : 0),
                     DemandTomorrow = demanda.TryGetValue(key, out var dv) ? dv : null,
                     SafetyTons = rd.IsDBNull(6) ? 0 : rd.GetDecimal(6),
                     LotTons = rd.IsDBNull(7) ? 25 : rd.GetDecimal(7),
                     InboundTons = inbound.TryGetValue(key, out var iv) ? iv : 0m,
-                    BestRateT = rate.TryGetValue(key, out var rv) ? rv : null
+                    BestRateT = rate.TryGetValue(key, out var rv) ? rv.Delivered : null,
+                    BestProductT = rv?.ProductPriceT,
+                    BestFreightT = rv?.FreightT,
+                    BestRateApproved = rv?.Approved ?? false
                 });
             }
         }
@@ -293,91 +301,6 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         cmd.Parameters.AddWithValue("c", corte.Date);
         cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
         return Convert.ToDecimal(await cmd.ExecuteScalarAsync(ct));
-    }
-
-    public async Task<object> Simular7DiasAsync(DateTime corte, long? plantId, CancellationToken ct = default)
-    {
-        await using var cn = await AbrirAsync(ct);
-        var stock = await CalcularStockAsync(cn, corte, plantId, ct);
-
-        // demand for days 1..7, keyed by (plant, material, dayOffset 1..7)
-        var dem = new Dictionary<(long, long, int), decimal>();
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT id_plant, id_material, (demand_date - @c::date) AS off, tons
-            FROM materialiq.demand
-            WHERE demand_date BETWEEN @c::date + 1 AND @c::date + 7 AND (@p::bigint IS NULL OR id_plant = @p)", cn))
-        {
-            cmd.Parameters.AddWithValue("c", corte.Date);
-            cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) dem[(rd.GetInt64(0), rd.GetInt64(1), rd.GetInt32(2))] = rd.GetDecimal(3);
-        }
-        // inbound by expected arrival day
-        var inb = new Dictionary<(long, long, int), decimal>();
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT id_plant, id_material, (expected_date - @c::date) AS off, SUM(tons)
-            FROM materialiq.purchase
-            WHERE status = 'In transit' AND expected_date BETWEEN @c::date + 1 AND @c::date + 7
-              AND (@p::bigint IS NULL OR id_plant = @p)
-            GROUP BY id_plant, id_material, (expected_date - @c::date)", cn))
-        {
-            cmd.Parameters.AddWithValue("c", corte.Date);
-            cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct)) inb[(rd.GetInt64(0), rd.GetInt64(1), rd.GetInt32(2))] = rd.GetDecimal(3);
-        }
-
-        var salida = new List<object>();
-        await using (var cmd = new NpgsqlCommand(@"
-            SELECT pl.id_plant, pl.name, m.id_material, m.mat_number, m.name,
-                   pm.safety_stock_t, pm.purchase_lot_t, pm.max_capacity_t, tar.r
-            FROM materialiq.plant_material pm
-            JOIN materialiq.plant pl ON pl.id_plant = pm.id_plant AND pl.is_active
-            JOIN materialiq.material m ON m.id_material = pm.id_material AND m.is_active
-            LEFT JOIN (SELECT id_plant, id_material, MIN(product_price_t + freight_t) AS r
-                       FROM materialiq.supplier_rate WHERE approved AND effective_date <= @c
-                       GROUP BY id_plant, id_material) tar
-                   ON tar.id_plant = pm.id_plant AND tar.id_material = pm.id_material
-            WHERE (@p::bigint IS NULL OR pm.id_plant = @p)
-            ORDER BY pl.name, m.mat_number", cn))
-        {
-            cmd.Parameters.AddWithValue("c", corte.Date);
-            cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
-            await using var rd = await cmd.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct))
-            {
-                long idp = rd.GetInt64(0), idm = rd.GetInt64(2);
-                decimal s = rd.IsDBNull(5) ? 0 : rd.GetDecimal(5);
-                decimal l = rd.IsDBNull(6) ? 25 : rd.GetDecimal(6);
-                decimal? cap = rd.IsDBNull(7) ? null : rd.GetDecimal(7);
-                decimal? r = rd.IsDBNull(8) ? null : rd.GetDecimal(8);
-                stock.TryGetValue((idp, idm), out var sv);
-                decimal bal = stock.ContainsKey((idp, idm)) ? sv.Q : 0m;
-                decimal weeklyBuy = 0; int? firstDay = null; bool capRisk = false;
-                var dias = new List<object>();
-                for (int t = 1; t <= 7; t++)
-                {
-                    decimal? d = dem.TryGetValue((idp, idm, t), out var dvv) ? dvv : null;
-                    decimal i = inb.TryGetValue((idp, idm, t), out var ivv) ? ivv : 0m;
-                    decimal x = bal + i - (d ?? 0);
-                    decimal need = Math.Max(0m, s - x);
-                    decimal buy = (l > 0 && need > 0) ? Math.Ceiling(need / l) * l : 0m;
-                    bal = x + buy;
-                    weeklyBuy += buy;
-                    if (buy > 0 && firstDay == null) firstDay = t;
-                    if (cap != null && bal > cap.Value) capRisk = true;
-                    dias.Add(new { day = t, demand = d, inbound = i, buy, closing = bal });
-                }
-                salida.Add(new
-                {
-                    idPlant = idp, plant = rd.GetString(1), idMaterial = idm,
-                    matNumber = rd.GetString(3), material = rd.GetString(4),
-                    weeklyBuyTn = weeklyBuy, weeklyBuyUsd = r != null ? weeklyBuy * r.Value : (decimal?)null,
-                    firstDay, capRisk, dias
-                });
-            }
-        }
-        return new { fecha = corte.ToString("yyyy-MM-dd"), filas = salida };
     }
 
     public async Task<object> ListarDemandaAsync(DateTime fecha, long? plantId, CancellationToken ct = default)
@@ -443,7 +366,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         var lista = new List<object>();
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
-            SELECT r.id_rate, pl.name, m.mat_number, m.name, s.name, r.effective_date, r.product_price_t, r.freight_t, r.origin, r.approved
+            SELECT r.id_rate, pl.name, m.mat_number, m.name, s.name, r.effective_date, r.product_price_t, r.freight_t, r.origin, r.approved, r.id_plant, r.id_material, r.id_supplier
             FROM materialiq.supplier_rate r
             JOIN materialiq.plant pl ON pl.id_plant = r.id_plant
             JOIN materialiq.material m ON m.id_material = r.id_material
@@ -456,7 +379,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             lista.Add(new { idRate = rd.GetInt64(0), plant = rd.GetString(1), matNumber = rd.GetString(2), material = rd.GetString(3),
                 supplier = rd.GetString(4), effectiveDate = rd.GetDateTime(5).ToString("yyyy-MM-dd"),
                 productPriceT = rd.GetDecimal(6), freightT = rd.GetDecimal(7), delivered = rd.GetDecimal(6) + rd.GetDecimal(7),
-                origin = rd.IsDBNull(8) ? null : rd.GetString(8), approved = rd.GetBoolean(9) });
+                origin = rd.IsDBNull(8) ? null : rd.GetString(8), approved = rd.GetBoolean(9), idPlant = rd.GetInt64(10), idMaterial = rd.GetInt64(11), idSupplier = rd.GetInt64(12) });
         return lista;
     }
 
@@ -466,7 +389,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
             SELECT pm.id_plant, pl.name, pm.id_material, m.mat_number, m.name,
-                   pm.safety_stock_t, pm.max_capacity_t, pm.lead_time_days, pm.purchase_lot_t
+                   pm.safety_stock_t, pm.max_capacity_t, pm.lead_time_days, pm.purchase_lot_t, pm.assigned_supplier_id
             FROM materialiq.plant_material pm
             JOIN materialiq.plant pl ON pl.id_plant = pm.id_plant
             JOIN materialiq.material m ON m.id_material = pm.id_material
@@ -478,11 +401,11 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             lista.Add(new { idPlant = rd.GetInt64(0), plant = rd.GetString(1), idMaterial = rd.GetInt64(2),
                 matNumber = rd.GetString(3), material = rd.GetString(4),
                 safetyStockT = rd.GetDecimal(5), maxCapacityT = rd.IsDBNull(6) ? (decimal?)null : rd.GetDecimal(6),
-                leadTimeDays = rd.GetInt32(7), purchaseLotT = rd.GetDecimal(8) });
+                leadTimeDays = rd.GetInt32(7), purchaseLotT = rd.GetDecimal(8), assignedSupplierId = rd.IsDBNull(9) ? (long?)null : rd.GetInt64(9) });
         return lista;
     }
 
-    public async Task<object> ChartsAsync(DateTime desde, DateTime hasta, long? plantId, string modo, CancellationToken ct = default)
+    public async Task<object> ChartsAsync(DateTime desde, DateTime hasta, long? plantId, string modo, long? materialId = null, CancellationToken ct = default)
     {
         // "received": delivered tons by receipt date (status Received).
         // "recorded": ordered tons by purchase date, includes in-transit; excludes voided.
@@ -496,28 +419,32 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         await using var cn = await AbrirAsync(ct);
 
         await using (var cmd = new NpgsqlCommand($@"
-            SELECT m.mat_number, m.name, SUM(pu.tons) AS t, SUM(pu.tons*(pu.product_price_t+pu.freight_t)) AS u
+            SELECT m.mat_number, m.name, SUM(pu.tons) AS t, SUM(pu.tons*(pu.product_price_t+pu.freight_t)) AS u,
+                   SUM(pu.tons*pu.product_price_t), SUM(pu.tons*pu.freight_t)
             FROM materialiq.purchase pu JOIN materialiq.material m ON m.id_material = pu.id_material
-            WHERE {filtro} AND (@p::bigint IS NULL OR pu.id_plant = @p)
+            WHERE {filtro} AND (@p::bigint IS NULL OR pu.id_plant = @p) AND (@m::bigint IS NULL OR pu.id_material=@m)
             GROUP BY m.mat_number, m.name ORDER BY t DESC", cn))
         {
             cmd.Parameters.AddWithValue("d", desde.Date); cmd.Parameters.AddWithValue("h", hasta.Date);
+            cmd.Parameters.AddWithValue("m", (object?)materialId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
             await using var rd = await cmd.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
-                materiales.Add(new { matNumber = rd.GetString(0), name = rd.GetString(1), tons = rd.GetDecimal(2), usd = rd.GetDecimal(3) });
+                materiales.Add(new { matNumber = rd.GetString(0), name = rd.GetString(1), tons = rd.GetDecimal(2), usd = rd.GetDecimal(3), product = rd.GetDecimal(4), freight = rd.GetDecimal(5) });
         }
         await using (var cmd = new NpgsqlCommand($@"
-            SELECT pl.name, SUM(pu.tons) AS t, SUM(pu.tons*(pu.product_price_t+pu.freight_t)) AS u
+            SELECT pl.name, SUM(pu.tons) AS t, SUM(pu.tons*(pu.product_price_t+pu.freight_t)) AS u,
+                   SUM(pu.tons*pu.product_price_t), SUM(pu.tons*pu.freight_t)
             FROM materialiq.purchase pu JOIN materialiq.plant pl ON pl.id_plant = pu.id_plant
-            WHERE {filtro} AND (@p::bigint IS NULL OR pu.id_plant = @p)
+            WHERE {filtro} AND (@p::bigint IS NULL OR pu.id_plant = @p) AND (@m::bigint IS NULL OR pu.id_material=@m)
             GROUP BY pl.name ORDER BY t DESC", cn))
         {
             cmd.Parameters.AddWithValue("d", desde.Date); cmd.Parameters.AddWithValue("h", hasta.Date);
+            cmd.Parameters.AddWithValue("m", (object?)materialId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p", (object?)plantId ?? DBNull.Value);
             await using var rd = await cmd.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
-                plantas.Add(new { plant = rd.GetString(0), tons = rd.GetDecimal(1), usd = rd.GetDecimal(2) });
+                plantas.Add(new { plant = rd.GetString(0), tons = rd.GetDecimal(1), usd = rd.GetDecimal(2), product = rd.GetDecimal(3), freight = rd.GetDecimal(4) });
         }
         return new { modo = recibido ? "received" : "recorded", materiales, plantas };
     }
@@ -527,9 +454,9 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         var lista = new List<object>();
         await using var cn = await AbrirAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
-            SELECT changed_at, entity, entity_id, action, field, old_value, new_value, reason, changed_by, host(changed_ip)
+            SELECT changed_at, entity, entity_id, action, field, old_value, new_value, reason, changed_by, host(changed_ip), plant_name, material_name, supplier_name, ticket_ref
             FROM materialiq.change_log
-            WHERE changed_at >= @d AND changed_at < @h + 1
+            WHERE changed_at >= @d::date AND changed_at < @h::date + 1
               AND (@e = '' OR entity = @e)
             ORDER BY changed_at DESC, id DESC LIMIT 1000", cn);
         cmd.Parameters.AddWithValue("d", desde.Date);
@@ -542,7 +469,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
                 entityId = rd.IsDBNull(2) ? (long?)null : rd.GetInt64(2), action = rd.GetString(3),
                 field = rd.IsDBNull(4) ? null : rd.GetString(4), oldValue = rd.IsDBNull(5) ? null : rd.GetString(5),
                 newValue = rd.IsDBNull(6) ? null : rd.GetString(6), reason = rd.IsDBNull(7) ? null : rd.GetString(7),
-                by = rd.IsDBNull(8) ? null : rd.GetString(8), ip = rd.IsDBNull(9) ? null : rd.GetString(9) });
+                by = rd.IsDBNull(8) ? null : rd.GetString(8), ip = rd.IsDBNull(9) ? null : rd.GetString(9), plant = rd.IsDBNull(10) ? null : rd.GetString(10), material = rd.IsDBNull(11) ? null : rd.GetString(11), supplier = rd.IsDBNull(12) ? null : rd.GetString(12), ticket = rd.IsDBNull(13) ? null : rd.GetString(13) });
         return lista;
     }
 
@@ -559,6 +486,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.demand (id_plant, id_material, demand_date, tons, production_cy, dosage_t_cy, updated_by)
             VALUES (@pl, @m, @d, @t, @cy, @do, @u)
@@ -582,6 +510,8 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 
     public async Task<Resultado> CrearCompraAsync(MqCompraReq req, string usuario, string? ip, CancellationToken ct = default)
     {
+        var dateError = ValidarFechasCompra(req);
+        if (dateError != null) return Resultado.Mal(dateError);
         if (!Rango(req.Tons, 0.0001m, MaxTons)) return Resultado.Mal("Tons must be between 0 and 100,000,000.");
         if (!Rango(req.ProductPriceT, 0, MaxMoney) || !Rango(req.FreightT, 0, MaxMoney)) return Resultado.Mal("Prices must be between 0 and 1,000,000.");
         if (!string.IsNullOrWhiteSpace(req.TicketRef) && !ReTicket.IsMatch(req.TicketRef.Trim())) return Resultado.Mal("Ticket contains invalid characters.");
@@ -590,6 +520,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.purchase (id_plant, id_material, id_supplier, purchase_date, tons, product_price_t, freight_t,
@@ -620,6 +551,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.IdPurchase <= 0) return Resultado.Mal("Purchase not specified.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
             UPDATE materialiq.purchase SET status = 'Received',
                    received_date = COALESCE(@rd, received_date, purchase_date),
@@ -640,6 +572,8 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 
     public async Task<Resultado> EditarCompraAsync(MqCompraReq req, string usuario, string? ip, CancellationToken ct = default)
     {
+        var dateError = ValidarFechasCompra(req);
+        if (dateError != null) return Resultado.Mal(dateError);
         if (req.IdPurchase is not > 0) return Resultado.Mal("Purchase not specified.");
         if (string.IsNullOrWhiteSpace(req.Reason)) return Resultado.Mal("Provide a reason for the edit.");
         if (!Rango(req.Tons, 0.0001m, MaxTons)) return Resultado.Mal("Tons must be between 0 and 100,000,000.");
@@ -648,12 +582,15 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         var status = req.Status == "Received" ? "Received" : "In transit";
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
-            UPDATE materialiq.purchase SET id_supplier=@s, purchase_date=@pd, tons=@t, product_price_t=@pp, freight_t=@fr,
-                   expected_date=@ed, status=@st, received_date = CASE WHEN @st='Received' THEN COALESCE(@rd, received_date, purchase_date) ELSE received_date END,
+            UPDATE materialiq.purchase SET id_plant=@pl, id_material=@m, id_supplier=@s, purchase_date=@pd, tons=@t, product_price_t=@pp, freight_t=@fr,
+                   expected_date=@ed, status=@st, received_date = CASE WHEN @st='Received' THEN COALESCE(@rd, received_date, @pd) ELSE NULL END,
                    ticket_ref=@tk, edit_reason=@re, updated_by=@u, updated_at=CURRENT_TIMESTAMP
             WHERE id_purchase=@id AND status <> 'Voided'", cn, tx))
         {
+            cmd.Parameters.AddWithValue("pl", req.IdPlant);
+            cmd.Parameters.AddWithValue("m", req.IdMaterial);
             cmd.Parameters.AddWithValue("s", (object?)req.IdSupplier ?? DBNull.Value);
             cmd.Parameters.AddWithValue("pd", req.PurchaseDate.Date);
             cmd.Parameters.AddWithValue("t", req.Tons);
@@ -683,8 +620,10 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
     private async Task<Resultado> CambiarEstadoAsync(long id, string? nuevo, string accion, string? reason, string usuario, string? ip, CancellationToken ct)
     {
         if (id <= 0) return Resultado.Mal("Purchase not specified.");
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length > 300) return Resultado.Mal("Provide a business reason (1–300 characters).");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, new { Reason = reason }, ct);
         // Restore: back to Received if it had a received_date, otherwise In transit.
         var sql = nuevo != null
             ? "UPDATE materialiq.purchase SET status=@st, updated_by=@u, updated_at=CURRENT_TIMESTAMP WHERE id_purchase=@id"
@@ -708,11 +647,12 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.ValueUsd != null && (req.ValueUsd < 0 || req.ValueUsd > 1_000_000_000m)) return Resultado.Mal("Value is out of range.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.closing_balance (id_plant, id_material, balance_date, tons, value_usd, created_by)
             VALUES (@pl, @m, @d, @t, @v, @u)
             ON CONFLICT (id_plant, id_material, balance_date)
-            DO UPDATE SET tons = EXCLUDED.tons, value_usd = EXCLUDED.value_usd, created_by = EXCLUDED.created_by", cn, tx))
+            DO UPDATE SET tons = EXCLUDED.tons, value_usd = EXCLUDED.value_usd, created_by = EXCLUDED.created_by, source_file = NULL, source_sheet = NULL, source_cell = NULL", cn, tx))
         {
             cmd.Parameters.AddWithValue("pl", req.IdPlant);
             cmd.Parameters.AddWithValue("m", req.IdMaterial);
@@ -729,9 +669,10 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
 
     public async Task<Resultado> RegistrarConsumoAsync(MqConsumoReq req, string usuario, string? ip, CancellationToken ct = default)
     {
-        if (!Rango(req.Tons, 0.0001m, MaxTons)) return Resultado.Mal("Tons must be between 0 and 100,000,000.");
+        if (!Rango(req.Tons, 0, MaxTons)) return Resultado.Mal("Tons must be between 0 and 100,000,000.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.consumption (id_plant, id_material, use_date, tons, created_by)
@@ -756,12 +697,13 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             return Resultado.Mal("Check safety (0+), lot (>0), lead time (0-90) and capacity.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
-            INSERT INTO materialiq.plant_material (id_plant, id_material, safety_stock_t, max_capacity_t, lead_time_days, purchase_lot_t, updated_by)
-            VALUES (@pl, @m, @s, @cap, @ld, @lot, @u)
+            INSERT INTO materialiq.plant_material (id_plant, id_material, safety_stock_t, max_capacity_t, lead_time_days, purchase_lot_t, assigned_supplier_id, updated_by)
+            VALUES (@pl, @m, @s, @cap, @ld, @lot, @as, @u)
             ON CONFLICT (id_plant, id_material)
             DO UPDATE SET safety_stock_t=EXCLUDED.safety_stock_t, max_capacity_t=EXCLUDED.max_capacity_t,
-                          lead_time_days=EXCLUDED.lead_time_days, purchase_lot_t=EXCLUDED.purchase_lot_t,
+                          lead_time_days=EXCLUDED.lead_time_days, purchase_lot_t=EXCLUDED.purchase_lot_t, assigned_supplier_id=EXCLUDED.assigned_supplier_id,
                           updated_by=EXCLUDED.updated_by, updated_at=CURRENT_TIMESTAMP", cn, tx))
         {
             cmd.Parameters.AddWithValue("pl", req.IdPlant);
@@ -770,6 +712,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
             cmd.Parameters.AddWithValue("cap", (object?)req.MaxCapacityT ?? DBNull.Value);
             cmd.Parameters.AddWithValue("ld", req.LeadTimeDays);
             cmd.Parameters.AddWithValue("lot", req.PurchaseLotT);
+            cmd.Parameters.AddWithValue("as", (object?)req.AssignedSupplierId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("u", usuario);
             await cmd.ExecuteNonQueryAsync(ct);
         }
@@ -784,6 +727,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (!ReName.IsMatch(name)) return Resultado.Mal("Enter a valid supplier name (2-120 characters, no strange symbols).");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         try
         {
@@ -805,6 +749,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.Origin != null && req.Origin.Trim().Length > 160) return Resultado.Mal("Origin is too long (max 160).");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.supplier_rate (id_plant, id_material, id_supplier, effective_date, product_price_t, freight_t, origin, approved, created_by)
@@ -831,6 +776,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.Id <= 0) return Resultado.Mal("Rate not specified.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand("UPDATE materialiq.supplier_rate SET approved = TRUE WHERE id_rate = @id", cn, tx))
         {
             cmd.Parameters.AddWithValue("id", req.Id);
@@ -849,6 +795,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (!ReName.IsMatch(name) || name.Length > 80) return Resultado.Mal("Enter a valid plant name.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         try
         {
@@ -878,6 +825,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.Density is < 0 or > 10) return Resultado.Mal("Density must be between 0 and 10.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         long id;
         try
         {
@@ -902,6 +850,7 @@ public class MaterialIqRepositorioPostgres : IMaterialIqRepositorio
         if (req.IdPlant <= 0 || req.IdMaterial <= 0) return Resultado.Mal("Plant and material are required.");
         await using var cn = await AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        await ContextoInventarioAsync(cn, tx, usuario, ip, req, ct);
         await using (var cmd = new NpgsqlCommand(@"
             INSERT INTO materialiq.plant_material (id_plant, id_material, safety_stock_t, purchase_lot_t, lead_time_days, updated_by)
             VALUES (@pl, @m, 0, 25, 1, @u) ON CONFLICT (id_plant, id_material) DO NOTHING", cn, tx))

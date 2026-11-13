@@ -15,6 +15,7 @@
   <!-- JCK Sand Pit quoter (served behind auth by CotizadorController, not from wwwroot) -->
   <ItemGroup>
     <Content Include="Quoter\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="MaterialIQ\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
