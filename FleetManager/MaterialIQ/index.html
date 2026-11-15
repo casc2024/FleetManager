@@ -107,4 +107,4 @@ function receiptForm(id){let o=purchaseRows().find(o=>o.id===id);modal('Confirm 
 function download(name,text,type){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff',text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function exportData(){try{return exportCurrentScreen(page)}catch(error){toast(error.message)}}
 $('date').value=today();loadBusinessUser();init();
-</script><script src="/js/materialiq-controls.js?v=20261114-9"></script></html>
+</script><script src="/js/us-currency.js?v=2"></script><script src="/js/materialiq-controls.js?v=20261115-1"></script></html>

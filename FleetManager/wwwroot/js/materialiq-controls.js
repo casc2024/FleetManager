@@ -52,13 +52,13 @@ function exportCurrentScreen(screen) {
 function englishValidationMessage(input) {
   const v = input.validity;
   if (v.valueMissing) return 'This field is required.';
+  if (v.customError) return input.validationMessage;
   if (v.badInput || v.typeMismatch) return input.type === 'number' ? 'Enter a valid number.' : 'Enter a valid value.';
   if (v.patternMismatch) return input.placeholder === 'MM/DD/YYYY' ? 'Enter a valid date in MM/DD/YYYY format.' : 'Use the requested format.';
   if (v.rangeUnderflow) return `Enter a value greater than or equal to ${input.min}.`;
   if (v.rangeOverflow) return `Enter a value less than or equal to ${input.max}.`;
   if (v.stepMismatch) return input.step === '1' ? 'Enter a whole number.' : 'Enter a value using the allowed increment.';
   if (v.tooLong) return `Enter no more than ${input.maxLength} characters.`;
-  if (v.customError) return input.validationMessage;
   return '';
 }
 // Shared controls for every MaterialIQ table and data-entry form.
@@ -76,6 +76,7 @@ function englishValidationMessage(input) {
     ? text.replace(/[^\p{L}\p{N} ._\/-]/gu, '')
     : text.replace(/[^\p{L}\p{M}\p{N} .,'&()/#:_\-]/gu, '').replace(/([&/#:_.,'()\-])\1+/gu, '$1');
   function enhance(root) {
+    if(typeof enhanceUsCurrency==='function')enhanceUsCurrency(root);
     root.querySelectorAll('form').forEach(form => { form.noValidate = true; });
     root.querySelectorAll('input[type="date"]').forEach(input => {
       if (input.dataset.usDate) return;

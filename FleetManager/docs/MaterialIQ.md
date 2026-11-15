@@ -1,3 +1,9 @@
+# Shared U.S. dollar fields
+
+`wwwroot/js/us-currency.js` supplies the same monetary editor across active MaterialIQ, the legacy MaterialIQ view, fleet daily revenue and the quote tool. It covers confirmed totals and cost components, product/freight rates, quote final-price overrides, material base prices, carrier rates/costs, minimum freight charges, dollar rounding settings and diesel prices. Fields display a dollar prefix, comma thousands separators and a period decimal separator; canonical numeric values continue to drive calculations and saves. Empty optional amounts remain empty. Diesel retains three-decimal price precision; other dollar entries use cents. Percentages, quantities, capacities, dimensions, miles and operational settings are not marked as currency.
+
+Dynamic quote lines and settings dialogs are enhanced automatically. Input/change events are forwarded to the original numeric inputs so recalculation and existing save handlers keep working. Malformed U.S. currency blocks form submissions and the button-driven quote/settings/revenue saves, preventing invalid strings from being stored as zero. `tests/currency-checks.cjs` verifies coverage, parsing, blank/zero handling, precision and numeric event forwarding.
+
 # Inventory tons-only adjustments — optional reason
 
 **Valued inventory → Adjust inventory tons only** accepts plant, SKU, date and physically counted tons. Reason is optional; blank or omitted reasons are saved as null and shown as **—** in business history. Negative counts and counts equal to the actual recorded balance for that date are rejected on the server and in the form.
