@@ -1,4 +1,40 @@
-# Active MaterialIQ model — original Site parity
+# Inventory tons-only adjustments — optional reason
+
+**Valued inventory → Adjust inventory tons only** accepts plant, SKU, date and physically counted tons. Reason is optional; blank or omitted reasons are saved as null and shown as **—** in business history. Negative counts and counts equal to the actual recorded balance for that date are rejected on the server and in the form.
+
+The server reads the confirmed balance in the same locked transaction and computes `value = counted tons × confirmed average cost per ton`, rounded to cents. It preserves registered product/transportation costs and cost without recorded breakdown proportionally; caller-supplied cost or before values are overwritten. Missing confirmed average cost requires **Update valued balance** first. A zero count is allowed, and its previously confirmed unit costs remain available for subsequent recounts.
+
+The append-only event type is `inventoryAdjustment`, separate from `purchase`, `usage` and `snapshot`. It acts as a counted inventory checkpoint for its date, consistent with the existing closing rule, and is used by RN-01 as physical stock. It never creates orders, receipts or consumption observations for the forecast. History includes the server-attributed user, timestamp, plant/SKU, effective date, actual before/after tons and values, preserved average cost and optional reason. Every prior adjustment remains intact. Server event timestamps use the database clock at insertion so concurrent serialized adjustments replay in the order actually saved.
+
+Tests: `tests/adjustment-checks.cjs`, tons adjustment cases in `tests/InventoryValuationChecks.cs` and isolated PostgreSQL cases in `tests/SuggestionChecks.cs` cover blank reasons, validation, average/value preservation, zero counts, before/after audit data and separation from purchases and forecast consumption. No schema migration is needed.
+
+# Confirmed inventory valuation by plant
+
+The overview plant chart now uses the same confirmed ledger balances and cent-based sum as **Inventory · confirmed cost**, for the selected cutoff and plant filter. Replacement rates remain a separate reference card and never create a historical split. Each SKU replays the latest valid valued closing, subsequent actual receipts and weighted-average consumption; a closing supersedes earlier and same-day movements. Invalid historical closings are skipped, and excess consumption leaves valuation unknown rather than negative.
+
+Optional closing fields `productValue` and `freightValue` must both be supplied or both omitted. Components must be nonnegative, and their sum must match `value` within USD 0.01 on the server and in the form. Historical totals without components stay in `unallocatedValue` (**Cost without recorded breakdown**). Receipts add their recorded product and freight amounts; consumption proportionally reduces confirmed components and unallocated cost. Currency is rounded to cents and any residual rounding adjustment is tracked separately, never invented as transportation.
+
+Dark green includes confirmed product, cost without recorded breakdown and any rounding adjustment. Light green includes transportation recorded separately. The legend and per-plant text show these meanings and amounts explicitly. Unvalued SKUs are labelled pending; they are excluded from both the confirmed card and plant total. The example of USD 100,000 total, USD 16,000 recorded product, USD 4,000 recorded transportation and USD 80,000 without breakdown yields USD 96,000 dark and USD 4,000 light.
+
+**Valued inventory → Update valued balance** preloads the selected date's physical tons and total for review, and exposes both optional component fields. It never pre-fills a missing split using a reference rate. New closing events preserve the earlier records. In the same transaction the server computes and saves `before` from the actual ledger, replacing any caller-supplied prior values; the existing server-attributed user and event timestamp identify the correction. Business history shows changes in date, tons, total, product, transportation, unallocated cost and rounding adjustment. No migration or automatic rewriting of historical costs is performed.
+
+Tests: `tests/InventoryValuationChecks.cs`, `tests/valuation-checks.cjs` and the local database correction tests in `tests/SuggestionChecks.cs` cover the example, tolerance boundaries, input validation, receipt/consumption replay, same-day replacement, latest valid closing, filtering, card/chart reconciliation and authenticated prior-value history.
+
+# RN-01 — versioned purchase suggestions
+
+The active event-model interface now implements RN-01. For cutoff T it evaluates tomorrow (T+1) and the seven dates T+1 through T+7. Empty demand is pending; an explicitly entered zero is confirmed. The server replays physical balances, actual receipts and actual consumption, then applies scheduled inbound orders only on their delivery dates. Planned demand never consumes physical stock. Each calculable day's projected closing balance becomes the following day's opening balance.
+
+A missing demand makes that day's and later balances unknown. Purchases already calculated from the consecutive confirmed prefix are shown as **Provisional** with the pending-day count. Missing days without calculable purchases show **Demand pending**, never zero dollars. Fully confirmed demand covered by stock shows **$0.00 · No purchase needed**. Missing inventory, policy or pricing is identified separately. The overview always displays the exact evaluated dates in English.
+
+`POST /api/materialiq/model/evaluations` accepts `{ "cutoff": "2026-11-12" }`. Evaluations are computed on the server from `model_reference_seed` and the event ledger, and saved as append-only `suggestionEvaluation` events. No extra schema migration is needed for an existing original-model installation. Every version contains its cutoff and period, plant/SKU, physical balance/date, policy, seven demand entries, considered inbound order IDs/dates/tons, applied supplier/product/freight rate, source event IDs, daily calculations, tons/cost/status, user and creation timestamp. A fingerprint reuses an unchanged latest version. Changed inputs create a new version, including when inputs revert to an older value.
+
+Business writes and evaluations share a transaction-scoped PostgreSQL advisory lock. Saving demand, balances, rates, policies, orders, receipts or corrections automatically re-evaluates previously evaluated cutoffs in the same transaction; earlier versions remain immutable. The history screen includes a dedicated **Purchase suggestion history · RN-01** section and read-only detail views. History begins when a cutoff is first evaluated under RN-01; the application does not invent previously unrecorded suggestions.
+
+Suggestions never create orders automatically. **Record purchase** from a suggestion opens a review form and submits the persisted suggestion ID with the explicitly confirmed purchase. The server validates the plant/SKU and calculable version, and purchase corrections cannot rewrite that origin. Independent manual orders remain supported. Viewing an older cutoff does not carry its suggestion into the next cutoff.
+
+Validation: `tests/rn01-checks.cjs` covers the interface acceptance case, pending versus zero, dates, daily planning, history and purchase links. `tests/SuggestionChecks.cs` covers the pure RN-01 engine and, with `--suggestions-database`, an isolated local PostgreSQL database, version retention, recalculation, order linkage and concurrent evaluation. No application or production database is used by these tests. Rebuild and restart the application to load the new server endpoints.
+
+# Original Site integration baseline
 
 The active `/materialiq` page now serves `MaterialIQ/index.html`, copied from the original JCK MaterialIQ Site with its eight tabs and business calculations. The only integration changes are the protected FleetManager URL, API addresses and sign-in identity. It does not publish or modify the reference Site.
 
